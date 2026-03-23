@@ -1,0 +1,218 @@
+{
+  "metadata": {
+    "model": "openai/gpt-5.4",
+    "harness": "codex",
+    "target": "notional-finance",
+    "timestamp": "2026-03-23T19:07:09.606292",
+    "duration_seconds": 2231,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 12,
+    "critical": 0,
+    "high": 1,
+    "medium": 6,
+    "low": 5,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Missing slippage protection on Pendle PT sUSDe redemption first leg",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "missing-slippage-protection",
+      "description": "The _executeInstantRedemption function in PendlePT_sUSDe.sol has limit set to 0 on the first trade leg (sUSDe to sDAI via Curve), providing no slippage protection. A sandwich attacker can manipulate the Curve pool before this trade executes, extracting value from the sUSDe-to-sDAI swap with no minimum output enforced.",
+      "location": {
+        "file": "src/staking/PendlePT_sUSDe.sol",
+        "lines": "33-48"
+      },
+      "recommendation": "Set a reasonable slippage limit on the first trade leg, or enforce a combined slippage check after both legs complete.",
+      "agents_reporting": [
+        "vector-scan-agent"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "Missing slippage protection on Pendle PT-to-token swap in _redeemPT",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "missing-slippage-protection",
+      "description": "When TOKEN_OUT_SY != asset, _redeemPT returns netTokenOut from swapExactPtForToken with no slippage check. The Pendle router's swap has no minimum output enforcement (tokenOutput.minTokenOut is never set). If the Pendle router returns fewer tokens than expected, the user absorbs the loss on the first swap with no protection.",
+      "location": {
+        "file": "src/staking/PendlePT.sol",
+        "lines": "90-98"
+      },
+      "recommendation": "Add a minimum output parameter for the Pendle PT-to-token swap and validate netTokenOut against it.",
+      "agents_reporting": [
+        "vector-scan-agent",
+        "math-precision-agent"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "Missing slippage protection on Pendle PT withdraw initiation",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "missing-slippage-protection",
+      "description": "When initiating withdraw for expired PTs, _redeemPT is called with empty limitOrderData and no minimum output check. The Pendle router can return fewer tokens than expected and the user's withdraw request is under-collateralized.",
+      "location": {
+        "file": "src/staking/PendlePT.sol",
+        "lines": "127-145"
+      },
+      "recommendation": "Add a minimum output check on tokenOutSy after redemption, or pass a slippage parameter.",
+      "agents_reporting": [
+        "vector-scan-agent"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "PendlePTLib swapExactPtForToken never sets minTokenOut",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "missing-slippage-protection",
+      "description": "The TokenOutput struct's minTokenOut field is never set in swapExactPtForToken, so the Pendle router's swap has no minimum output enforcement. The comment says 'later' but no check is ever performed. The zero-value default means any output amount is accepted.",
+      "location": {
+        "file": "src/staking/PendlePTLib.sol",
+        "lines": "49-75"
+      },
+      "recommendation": "Accept a minTokenOut parameter and set it on the TokenOutput struct, or add a post-swap validation.",
+      "agents_reporting": [
+        "vector-scan-agent",
+        "math-precision-agent"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "Delegatecall to trading module implementation exposes strategy state",
+      "severity": "medium",
+      "confidence": "low",
+      "category": "delegatecall-arbitrary-address",
+      "description": "_delegateCall executes arbitrary code from the TRADING_MODULE's implementation address in the contract's context. If the implementation is upgraded to malicious code, all strategy state can be manipulated. The implementation address is fetched at runtime from the nProxy.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "377-388"
+      },
+      "recommendation": "Ensure the TRADING_MODULE proxy has strong governance controls and consider adding an allowlist of callable selectors.",
+      "agents_reporting": [
+        "access-control-agent"
+      ]
+    },
+    {
+      "id": "F-006",
+      "title": "Unvalidated oracle rate cast in convertYieldTokenToAsset",
+      "severity": "low",
+      "confidence": "high",
+      "category": "unchecked-return-value",
+      "description": "The function casts the int256 oracle rate to uint256 without checking for negative values. If TRADING_MODULE.getOraclePrice returns a negative rate (e.g., due to oracle malfunction), the uint256 cast would produce an astronomically large number, corrupting all asset valuations.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "141-146"
+      },
+      "recommendation": "Add require(rate >= 0) or use TypeConvert.toUint(rate) before casting.",
+      "agents_reporting": [
+        "math-precision-agent"
+      ]
+    },
+    {
+      "id": "F-007",
+      "title": "External price(address) function allows arbitrary account valuation manipulation",
+      "severity": "low",
+      "confidence": "low",
+      "category": "access-control-gap",
+      "description": "The external price(address borrower) function allows anyone to temporarily set t_CurrentAccount to any address, which affects convertToAssets valuation for staking strategies with pending withdraw requests. An attacker could call price() with a target account to observe their withdraw request valuation.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "118-133"
+      },
+      "recommendation": "Restrict the external price(address) function to authorized callers (e.g., lending routers or the lending market).",
+      "agents_reporting": [
+        "access-control-agent",
+        "periphery-agent"
+      ]
+    },
+    {
+      "id": "F-008",
+      "title": "Dinero canFinalizeWithdrawRequest has inverted logic",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "logic-error",
+      "description": "The finalization check condition PirexETH.outstandingRedemptions() > totalAssets appears inverted. It allows finalization when total outstanding claims exceed available assets instead of when sufficient assets are available. The correct check should likely be totalAssets >= outstandingRedemptions.",
+      "location": {
+        "file": "src/withdraws/Dinero.sol",
+        "lines": "87"
+      },
+      "recommendation": "Invert the comparison operator to '<=' or remove the cross-request liquidity check, since each request should be entitled to claim its own batch assets once validators are dissolved/slashed.",
+      "agents_reporting": [
+        "math-precision-agent",
+        "invariant-agent"
+      ]
+    },
+    {
+      "id": "F-009",
+      "title": "EtherFi finalize balance inflation from residual ETH",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "integer-overflow",
+      "description": "tokensClaimed is computed as address(this).balance minus balanceBefore, but if the contract holds residual ETH from a prior failed claimWithdraw or from forced ETH sends (e.g. selfdestruct), the balance difference will be inflated, causing excess WETH to be minted and attributed to the current request.",
+      "location": {
+        "file": "src/withdraws/EtherFi.sol",
+        "lines": "43-46"
+      },
+      "recommendation": "Store the expected ETH amount from the NFT withdrawal request and use that instead of computing balance differences, or verify that tokensClaimed matches the expected claim amount.",
+      "agents_reporting": [
+        "economic-security-agent"
+      ]
+    },
+    {
+      "id": "F-010",
+      "title": "Ethena _finalizeCooldown uses unsafe raw ERC20 transfer",
+      "severity": "low",
+      "confidence": "low",
+      "category": "unsafe-external-call",
+      "description": "USDe.transfer is used directly instead of SafeERC20.safeTransfer. If USDe were to gain a transfer fee or rebasing behavior in the future, tokensClaimed computed from balance difference would not match the amount actually received by manager.",
+      "location": {
+        "file": "src/withdraws/Ethena.sol",
+        "lines": "47-48"
+      },
+      "recommendation": "Use SafeERC20.safeTransfer or verify the manager's USDe balance increased by tokensClaimed after the transfer.",
+      "agents_reporting": [
+        "economic-security-agent"
+      ]
+    },
+    {
+      "id": "F-011",
+      "title": "AbstractRewardManager.updateAccountRewards lacks direct reentrancy protection",
+      "severity": "low",
+      "confidence": "medium",
+      "category": "reentrancy",
+      "description": "updateAccountRewards calls _executeClaim() which makes an external call to the Convex reward pool (getReward). If the Convex pool triggers a callback during reward claiming, reentry could occur. Mitigated by nonReentrant on all calling vault functions, but defense-in-depth would benefit from adding nonReentrant directly.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "180-220"
+      },
+      "recommendation": "Add nonReentrant modifier to updateAccountRewards for defense-in-depth, even though calling functions already have the guard.",
+      "agents_reporting": [
+        "vector-scan-agent",
+        "execution-trace-agent"
+      ]
+    },
+    {
+      "id": "F-012",
+      "title": "AbstractRewardManager.updateRewardToken allows duplicate reward token registration",
+      "severity": "low",
+      "confidence": "medium",
+      "category": "input-validation",
+      "description": "When index == numRewardStates, it pushes a new VaultRewardState without checking existing states for duplicates. This could cause the same token to appear twice in the rewards array, leading to incorrect double-accumulation of emission rewards.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "240-260"
+      },
+      "recommendation": "Add a loop to check existing reward states for duplicate token addresses before registering a new one.",
+      "agents_reporting": [
+        "invariant-agent"
+      ]
+    }
+  ],
+  "raw_output": "# Security Audit — Notional Finance Yield Strategies\n\nModel: openai/gpt-5.4 | Harness: codex | Skill: pashov/skills solidity-auditor v2\nTimestamp: 2026-03-23T19:07:09.606292\nDuration: 1481.5 seconds\n\n## Findings Summary\nTotal: 12 | Critical: 0 | High: 1 | Medium: 6 | Low: 5 | Informational: 0\n\n## Detailed Findings\n\n[HIGH] **F-001. Missing slippage protection on Pendle PT sUSDe redemption first leg**\nSeverity: medium | Confidence: high | Category: missing-slippage-protection\nLocation: src/staking/PendlePT_sUSDe.sol (33-48)\n**Description:** The _executeInstantRedemption function in PendlePT_sUSDe.sol has limit set to 0 on the first trade leg (sUSDe to sDAI via Curve), providing no slippage protection. A sandwich attacker can manipulate the Curve pool before this trade executes, extracting value from the sUSDe-to-sDAI swap with no minimum output enforced.\n**Fix:** Set a reasonable slippage limit on the first trade leg, or enforce a combined slippage check after both legs complete.\nAgents: vector-scan-agent\n---\n[MEDIUM] **F-002. Missing slippage protection on Pendle PT-to-token swap in _redeemPT**\nSeverity: medium | Confidence: medium | Category: missing-slippage-protection\nLocation: src/staking/PendlePT.sol (90-98)\n**Description:** When TOKEN_OUT_SY != asset, _redeemPT returns netTokenOut from swapExactPtForToken with no slippage check. The Pendle router's swap has no minimum output enforcement (tokenOutput.minTokenOut is never set). If the Pendle router returns fewer tokens than expected, the user absorbs the loss on the first swap with no protection.\n**Fix:** Add a minimum output parameter for the Pendle PT-to-token swap and validate netTokenOut against it.\nAgents: vector-scan-agent, math-precision-agent\n---\n[MEDIUM] **F-003. Missing slippage protection on Pendle PT withdraw initiation**\nSeverity: medium | Confidence: medium | Category: missing-slippage-protection\nLocation: src/staking/PendlePT.sol (127-145)\n**Description:** When initiating withdraw for expired PTs, _redeemPT is called with empty limitOrderData and no minimum output check. The Pendle router can return fewer tokens than expected and the user's withdraw request is under-collateralized.\n**Fix:** Add a minimum output check on tokenOutSy after redemption, or pass a slippage parameter.\nAgents: vector-scan-agent\n---\n[HIGH] **F-004. PendlePTLib swapExactPtForToken never sets minTokenOut**\nSeverity: medium | Confidence: high | Category: missing-slippage-protection\nLocation: src/staking/PendlePTLib.sol (49-75)\n**Description:** The TokenOutput struct's minTokenOut field is never set in swapExactPtForToken, so the Pendle router's swap has no minimum output enforcement. The comment says 'later' but no check is ever performed. The zero-value default means any output amount is accepted.\n**Fix:** Accept a minTokenOut parameter and set it on the TokenOutput struct, or add a post-swap validation.\nAgents: vector-scan-agent, math-precision-agent\n---\n[LOW] **F-005. Delegatecall to trading module implementation exposes strategy state**\nSeverity: medium | Confidence: low | Category: delegatecall-arbitrary-address\nLocation: src/AbstractYieldStrategy.sol (377-388)\n**Description:** _delegateCall executes arbitrary code from the TRADING_MODULE's implementation address in the contract's context. If the implementation is upgraded to malicious code, all strategy state can be manipulated. The implementation address is fetched at runtime from the nProxy.\n**Fix:** Ensure the TRADING_MODULE proxy has strong governance controls and consider adding an allowlist of callable selectors.\nAgents: access-control-agent\n---\n[HIGH] **F-006. Unvalidated oracle rate cast in convertYieldTokenToAsset**\nSeverity: low | Confidence: high | Category: unchecked-return-value\nLocation: src/AbstractYieldStrategy.sol (141-146)\n**Description:** The function casts the int256 oracle rate to uint256 without checking for negative values. If TRADING_MODULE.getOraclePrice returns a negative rate (e.g., due to oracle malfunction), the uint256 cast would produce an astronomically large number, corrupting all asset valuations.\n**Fix:** Add require(rate >= 0) or use TypeConvert.toUint(rate) before casting.\nAgents: math-precision-agent\n---\n[LOW] **F-007. External price(address) function allows arbitrary account valuation manipulation**\nSeverity: low | Confidence: low | Category: access-control-gap\nLocation: src/AbstractYieldStrategy.sol (118-133)\n**Description:** The external price(address borrower) function allows anyone to temporarily set t_CurrentAccount to any address, which affects convertToAssets valuation for staking strategies with pending withdraw requests. An attacker could call price() with a target account to observe their withdraw request valuation.\n**Fix:** Restrict the external price(address) function to authorized callers (e.g., lending routers or the lending market).\nAgents: access-control-agent, periphery-agent\n---\n[MEDIUM] **F-008. Dinero canFinalizeWithdrawRequest has inverted logic**\nSeverity: high | Confidence: medium | Category: logic-error\nLocation: src/withdraws/Dinero.sol (87)\n**Description:** The finalization check condition PirexETH.outstandingRedemptions() > totalAssets appears inverted. It allows finalization when total outstanding claims exceed available assets instead of when sufficient assets are available. The correct check should likely be totalAssets >= outstandingRedemptions.\n**Fix:** Invert the comparison operator to '<=' or remove the cross-request liquidity check, since each request should be entitled to claim its own batch assets once validators are dissolved/slashed.\nAgents: math-precision-agent, invariant-agent\n---\n[MEDIUM] **F-009. EtherFi finalize balance inflation from residual ETH**\nSeverity: medium | Confidence: medium | Category: integer-overflow\nLocation: src/withdraws/EtherFi.sol (43-46)\n**Description:** tokensClaimed is computed as address(this).balance minus balanceBefore, but if the contract holds residual ETH from a prior failed claimWithdraw or from forced ETH sends (e.g. selfdestruct), the balance difference will be inflated, causing excess WETH to be minted and attributed to the current request.\n**Fix:** Store the expected ETH amount from the NFT withdrawal request and use that instead of computing balance differences, or verify that tokensClaimed matches the expected claim amount.\nAgents: economic-security-agent\n---\n[LOW] **F-010. Ethena _finalizeCooldown uses unsafe raw ERC20 transfer**\nSeverity: low | Confidence: low | Category: unsafe-external-call\nLocation: src/withdraws/Ethena.sol (47-48)\n**Description:** USDe.transfer is used directly instead of SafeERC20.safeTransfer. If USDe were to gain a transfer fee or rebasing behavior in the future, tokensClaimed computed from balance difference would not match the amount actually received by manager.\n**Fix:** Use SafeERC20.safeTransfer or verify the manager's USDe balance increased by tokensClaimed after the transfer.\nAgents: economic-security-agent\n---\n[MEDIUM] **F-011. AbstractRewardManager.updateAccountRewards lacks direct reentrancy protection**\nSeverity: low | Confidence: medium | Category: reentrancy\nLocation: src/rewards/AbstractRewardManager.sol (180-220)\n**Description:** updateAccountRewards calls _executeClaim() which makes an external call to the Convex reward pool (getReward). If the Convex pool triggers a callback during reward claiming, reentry could occur. Mitigated by nonReentrant on all calling vault functions, but defense-in-depth would benefit from adding nonReentrant directly.\n**Fix:** Add nonReentrant modifier to updateAccountRewards for defense-in-depth, even though calling functions already have the guard.\nAgents: vector-scan-agent, execution-trace-agent\n---\n[MEDIUM] **F-012. AbstractRewardManager.updateRewardToken allows duplicate reward token registration**\nSeverity: low | Confidence: medium | Category: input-validation\nLocation: src/rewards/AbstractRewardManager.sol (240-260)\n**Description:** When index == numRewardStates, it pushes a new VaultRewardState without checking existing states for duplicates. This could cause the same token to appear twice in the rewards array, leading to incorrect double-accumulation of emission rewards.\n**Fix:** Add a loop to check existing reward states for duplicate token addresses before registering a new one.\nAgents: invariant-agent\n---\n\n## Leads (Unverified)\n\n- **Token loss on trade failure** — AbstractStakingStrategy._redeemShares — Shares escrowed and finalized, but if trade returns fewer tokens than expected (minPurchaseAmount=0), user loses value. Shares are burned after _redeemShares returns regardless of trade output quality.\n- **Integer underflow potential** — AbstractYieldStrategy._burnShares — assetsWithdrawn = finalAssetBalance - initialAssetBalance could underflow if unexpected token behavior causes balance decrease between reads. NonReentrant mitigates same-entry reentrancy but other vectors remain unverified.\n- **Reentrancy in Pendle library** — PendlePTLib.swapExactTokenForToken — redeemExpiredPT calls pt.transfer then yt.redeemPY. If PT or YT tokens have transfer hooks, reentrancy during redemption flow is possible. Depends on external Pendle implementations.\n- **Dinero leftover ETH accumulation** — Dinero._finalizeWithdrawImpl — WETH.deposit wraps ALL contract ETH; if prior partial batch left residual ETH, it gets incorrectly attributed to current finalization.\n- **EtherFi reentrancy via NFT** — EtherFi._finalizeWithdrawImpl — WithdrawRequestNFT.claimWithdraw is an external call returning ETH. Depends on external NFT contract implementation.\n- **RewardManagerMixin fallback delegatecall** — RewardManagerMixin.fallback — uses delegatecall to forward arbitrary calls to REWARD_MANAGER, blocking only updateAccountRewards. Other functions reachable but appear protected by onlyUpgradeAdmin.\n- **Lending router liquidation transient state** — AbstractLendingRouter.liquidate — sets transient transfer state between pre/postLiquidation. If _liquidate triggers callback interacting with vault's transient state, it could be consumed or manipulated.\n\n> This review was performed by an AI agent. AI analysis can never verify the complete absence of vulnerabilities and no guarantee of security is given."
+}

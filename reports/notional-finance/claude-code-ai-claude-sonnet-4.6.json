@@ -1,0 +1,110 @@
+{
+  "metadata": {
+    "model": "claude-sonnet-4.6",
+    "harness": "claude-code",
+    "target": "notional-finance",
+    "timestamp": "2026-03-23T19:41:48.840363Z",
+    "duration_seconds": 1798,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 5,
+    "critical": 1,
+    "high": 3,
+    "medium": 1,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Missing Chainlink staleness and round-completeness validation in custom oracle contracts",
+      "severity": "high",
+      "confidence": "high",
+      "category": "oracle-manipulation",
+      "description": "Both PendlePTOracle and Curve2TokenOracle contracts call baseToUSDOracle.latestRoundData() and only check require(baseToUSD > 0) — no updatedAt staleness guard and no answeredInRound >= roundId assertion. A stale Chainlink price (e.g., after an L2 sequencer outage or delayed oracle update) flows silently into PT/LP token valuation, then into Morpho collateral calculation via MorphoLendingRouter.healthFactor(), allowing borrowers to borrow against inflated collateral values and blocking valid liquidations.",
+      "location": {
+        "file": "src/oracles/PendlePTOracle.sol",
+        "lines": "N/A (see _calculateBaseToQuote)"
+      },
+      "recommendation": "Add require(block.timestamp - updatedAt <= MAX_ORACLE_DELAY, 'Stale oracle price') and require(answeredInRound >= roundId, 'Incomplete Chainlink round') after calling latestRoundData() in both PendlePTOracle._calculateBaseToQuote and Curve2TokenOracle._calculateBaseToQuote.",
+      "agents_reporting": [
+        "vector-scan-agent",
+        "execution-trace-agent"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "PendlePT_sUSDe instant redemption first swap hop has no slippage protection",
+      "severity": "high",
+      "confidence": "high",
+      "category": "mev-sandwich",
+      "description": "The sUSDe→sDAI Curve V2 swap in PendlePT_sUSDe._executeInstantRedemption executes with limit: 0 — no minimum output on this hop. The downstream params.minPurchaseAmount only covers the final DAI→asset leg. An MEV sandwich bot can manipulate the Curve pool price around any redemption, capturing the full slippage tolerance on the first leg while the user's only guard fires after the loss has already occurred. Combined with forceWithdraw (F-004), an attacker can force-withdraw an undercollateralized PendlePT_sUSDe user with crafted data that triggers instant redemption, then sandwich the exposed first hop.",
+      "location": {
+        "file": "src/staking/PendlePT_sUSDe.sol",
+        "lines": "N/A (see _executeInstantRedemption)"
+      },
+      "recommendation": "Add a minimum output parameter (e.g., params.minSDAIAmount) to PendleRedeemParams and use it as the limit for the first swap hop instead of 0.",
+      "agents_reporting": [
+        "vector-scan-agent"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "DineroWithdrawRequestManager.canFinalizeWithdrawRequest uses inverted finalization condition, permanently blocking user withdrawals",
+      "severity": "critical",
+      "confidence": "medium",
+      "category": "logic-error",
+      "description": "The canFinalizeWithdrawRequest function returns PirexETH.outstandingRedemptions() > totalAssets, yet the inline comment states 'Can only finalize if the total assets are greater than the outstanding redemptions.' The condition is backwards: when the system is healthy (totalAssets >= outstandingRedemptions) the function returns false and no finalization is possible, permanently locking user ETH. The function only returns true when the system is insolvent (outstandingRedemptions > totalAssets), allowing finalizations into an underfunded state. This was flagged by 7 of 8 agents.",
+      "location": {
+        "file": "src/withdraws/Dinero.sol",
+        "lines": "N/A (see canFinalizeWithdrawRequest)"
+      },
+      "recommendation": "Invert the condition: return totalAssets >= PirexETH.outstandingRedemptions() instead of the reverse.",
+      "agents_reporting": [
+        "vector-scan-agent",
+        "math-precision-agent",
+        "access-control-agent",
+        "economic-security-agent",
+        "execution-trace-agent",
+        "invariant-agent",
+        "periphery-agent"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "forceWithdraw accepts attacker-controlled data, enabling MEV sandwich of forced LP exits",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "mev-sandwich",
+      "description": "AbstractLendingRouter.forceWithdraw has no access control and forwards the caller-supplied data parameter directly to vault.initiateWithdraw(account, data). For AbstractSingleSidedLP vaults, data encodes minAmounts for the Curve pool exit. An attacker can supply minAmounts = [0, 0], initiating a zero-slippage LP unwind of any undercollateralized account. A sandwich bot then extracts value from the victim's forced exit, imposing additional losses beyond the insolvency itself.",
+      "location": {
+        "file": "src/routers/AbstractLendingRouter.sol",
+        "lines": "N/A (see forceWithdraw)"
+      },
+      "recommendation": "Replace attacker-supplied data with a safe default using IYieldStrategy(vault).defaultWithdrawData(), or validate that data originates from the account owner, or enforce a protocol-minimum slippage for forced withdrawals.",
+      "agents_reporting": [
+        "access-control-agent",
+        "economic-security-agent",
+        "periphery-agent"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "MorphoLendingRouter.healthFactor truncates borrower debt, allowing marginally insolvent positions to evade liquidation",
+      "severity": "medium",
+      "confidence": "low",
+      "category": "rounding-error",
+      "description": "borrowed = (position.borrowShares * market.totalBorrowAssets) / market.totalBorrowShares uses floor division, understating debt by up to 1 wei per computation. Morpho's own SharesMathLib.toAssetsUp rounds up for borrower-side conversions to protect the protocol. The understatement means a position with borrowed == maxBorrow + 1 wei (truly insolvent) passes the borrowed <= maxBorrow check in forceWithdraw, deferring forced exits and allowing bad debt to accumulate.",
+      "location": {
+        "file": "src/routers/MorphoLendingRouter.sol",
+        "lines": "N/A (see healthFactor)"
+      },
+      "recommendation": "Use ceiling division (round up) when computing borrowed amount to match Morpho's own SharesMathLib.toAssetsUp pattern, ensuring the health factor accurately reflects true debt.",
+      "agents_reporting": [
+        "economic-security-agent"
+      ]
+    }
+  ],
+  "raw_output": "**Turn 4 — Deduplicate, validate & output**\n\nParsing all agent results:\n\n**Deduplication pass:**\n- **Dinero canFinalizeWithdrawRequest** [agents: 7] — most-flagged finding\n- **Chainlink staleness** [agents: 1+4] — two agents, different angles (oracle + sequencer)\n- **healthFactor borrow rounds down** [agents: 4] — 4 agents, demoted for dust but promoted by multi-agent convergence rule → FINDING [75]\n- **forceWithdraw arbitrary data** [agents: 3]\n- **PendlePT_sUSDe zero slippage first hop** [agents: 1]\n- **AbstractRewardManager.updateAccountRewards access control** — REJECTED (direct calls hit own storage, not vault storage)\n- **onMorphoFlashLoan unauthorized entry** [agents: 2] — uncertain guard on setPosition → LEAD\n- **migratePosition stale-read** — REJECTED (atomic tx, no interest accrues between healthFactor call and repay)\n- **_isWithdrawRequestPending always false** — REJECTED (msg.sender in regular call = vault, not LP_LIB)\n- **residual ERC20 approval** — REJECTED (transient _update guard blocks unauthorized transfers regardless of allowance)\n- **exitPosition clears when Morpho prevents insolvent withdrawal** — REJECTED (Morpho enforces structurally)\n- **liquidate cross-router check** — REJECTED (getVaultPosition returns lendingRouter from the address registry regardless of which router set it)\n- **Share minting 0 shares** — REJECTED (self-harm only)\n- **convertSharesToYieldToken rounds down** — REJECTED (standard vault rounding, dust to pool)\n\n**Composite chains:**\n- [F4: forceWithdraw] + [F2: PendlePT_sUSDe slippage]: attacker force-withdraws an undercollateralized PendlePT_sUSDe user with attacker-crafted data that triggers instant redemption at zero slippage. Combined impact > either alone. Confidence = min(80, 90) = 80. Merged into F4 description.\n\n---\n\n# 🔐 Security Review — notional-finance\n\n---\n\n## Scope\n\n| | |\n|---|---|\n| **Mode** | ALL / default |\n| **Files reviewed** | `MorphoLendingRouter.sol` · `AbstractLendingRouter.sol` · `ConvexRewardManager.sol`<br>`RewardManagerMixin.sol` · `AbstractRewardManager.sol` · `PendlePTOracle.sol`<br>`AbstractCustomOracle.sol` · `AbstractLPOracle.sol` · `Curve2TokenOracle.sol`<br>`Dinero.sol` · `AbstractWithdrawRequestManager.sol` · `ClonedCooldownHolder.sol`<br>`GenericERC4626.sol` · `Origin.sol` · `Ethena.sol`<br>`EtherFi.sol` · `GenericERC20.sol` · `PendlePT_sUSDe.sol`<br>`PendlePT.sol` · `PendlePTLib.sol` · `AbstractStakingStrategy.sol`<br>`StakingStrategy.sol` · `Initializable.sol` · `TimelockUpgradeableProxy.sol`<br>`AddressRegistry.sol` · `AbstractYieldStrategy.sol` · `AbstractSingleSidedLP.sol`<br>`CurveConvex2Token.sol` · `TokenUtils.sol` · `Constants.sol`<br>`TypeConvert.sol` · `DeployWithdrawManager.sol` · `GnosisHelper.sol`<br>`DeployAddressRegistry.sol` · `DeployVault.sol` |\n| **Confidence threshold (1-100)** | 80 |\n\n---\n\n## Findings\n\n[90] **1. Missing Chainlink staleness and round-completeness validation in custom oracle contracts** · [agents: 2]\n\n`PendlePTOracle._calculateBaseToQuote` · `Curve2TokenOracle._calculateBaseToQuote` · Confidence: 90\n\n**Description**\nBoth oracle contracts call `baseToUSDOracle.latestRoundData()` and only check `require(baseToUSD > 0)` — no `updatedAt` staleness guard and no `answeredInRound >= roundId` assertion. A stale Chainlink price (e.g., after an L2 sequencer outage or delayed oracle update) flows silently into PT/LP token valuation → `IYieldStrategy.price()` → Morpho collateral calculation in `MorphoLendingRouter.healthFactor()`, allowing borrowers to borrow against inflated collateral values and blocking valid liquidations.\n\n**Fix**\n\n```diff\n (roundId, baseToUSD, startedAt, updatedAt, answeredInRound) = baseToUSDOracle.latestRoundData();\n require(baseToUSD > 0, \"Chainlink Rate Error\");\n+require(block.timestamp - updatedAt <= MAX_ORACLE_DELAY, \"Stale oracle price\");\n+require(answeredInRound >= roundId, \"Incomplete Chainlink round\");\n```\n_(Apply identically in both `PendlePTOracle._calculateBaseToQuote` and `Curve2TokenOracle._calculateBaseToQuote`.)_\n\n---\n\n[90] **2. PendlePT_sUSDe instant redemption first swap hop has no slippage protection** · [agents: 1]\n\n`PendlePT_sUSDe._executeInstantRedemption` · Confidence: 90\n\n**Description**\nThe sUSDe→sDAI Curve V2 swap executes with `limit: 0` — no minimum output on this hop. The downstream `params.minPurchaseAmount` only covers the final DAI→asset leg. An MEV sandwich bot can manipulate the Curve pool price around any redemption, capturing the full slippage tolerance on the first leg while the user's only guard fires after the loss has already occurred. Chain: `forceWithdraw` [F4] compounds this — an attacker can force-withdraw an undercollateralized PendlePT_sUSDe user with crafted `data` that triggers instant redemption, then sandwich the exposed first hop.\n\n**Fix**\n\n```diff\n-amount: netTokenOut,\n-limit: 0, // NOTE: no slippage guard is set here\n+amount: netTokenOut,\n+limit: params.minSDAIAmount,   // add minSDAIAmount to PendleRedeemParams\n```\n\n---\n\n[85] **3. DineroWithdrawRequestManager.canFinalizeWithdrawRequest uses inverted finalization condition, permanently blocking user withdrawals** · [agents: 7]\n\n`DineroWithdrawRequestManager.canFinalizeWithdrawRequest` · Confidence: 85\n\n**Description**\nThe function returns `PirexETH.outstandingRedemptions() > totalAssets`, yet the inline comment states _\"Can only finalize if the total assets are greater than the outstanding redemptions.\"_ The condition is backwards: when the system is healthy (`totalAssets >= outstandingRedemptions`) the function returns `false` and no finalization is possible, permanently locking user ETH. The function only returns `true` when the system is insolvent (`outstandingRedemptions > totalAssets`), allowing finalizations into an underfunded state.\n\n**Fix**\n\n```diff\n-return PirexETH.outstandingRedemptions() > totalAssets;\n+return totalAssets >= PirexETH.outstandingRedemptions();\n```\n\n---\n\n[80] **4. forceWithdraw accepts attacker-controlled data, enabling MEV sandwich of forced LP exits** · [agents: 3]\n\n`AbstractLendingRouter.forceWithdraw` · Confidence: 80\n\n**Description**\n`forceWithdraw` has no access control and forwards the caller-supplied `data` parameter directly to `vault.initiateWithdraw(account, data)`. For `AbstractSingleSidedLP` vaults, `data` encodes `minAmounts` for the Curve pool exit. An attacker can supply `minAmounts = [0, 0]`, initiating a zero-slippage LP unwind of any undercollateralized account. A sandwich bot then extracts value from the victim's forced exit, imposing additional losses beyond the insolvency itself.\n\n**Fix**\n\n```diff\n function forceWithdraw(\n     address account,\n     address vault,\n     bytes calldata data\n ) external returns (uint256 requestId) {\n     (uint256 borrowed, , uint256 maxBorrow) = healthFactor(account, vault);\n     if (borrowed <= maxBorrow) revert CannotForceWithdraw(account);\n-    requestId = _initiateWithdraw(vault, account, data);\n+    bytes memory safeData = IYieldStrategy(vault).defaultWithdrawData();\n+    requestId = _initiateWithdraw(vault, account, safeData);\n     IYieldStrategy(vault).clearCurrentAccount();\n }\n```\n\n_(Alternatively, validate that `data` originates from the account owner, or enforce a protocol-minimum slippage for forced withdrawals.)_\n\n---\n\n[75] **5. MorphoLendingRouter.healthFactor truncates borrower debt, allowing marginally insolvent positions to evade liquidation** · [agents: 4]\n\n`MorphoLendingRouter.healthFactor` · Confidence: 75\n\n**Description**\n`borrowed = (position.borrowShares * market.totalBorrowAssets) / market.totalBorrowShares` uses floor division, understating debt by up to 1 wei per computation. Morpho's own `SharesMathLib.toAssetsUp` rounds up for borrower-side conversions to protect the protocol. The understatement means a position with `borrowed == maxBorrow + 1` wei (truly insolvent) passes the `borrowed <= maxBorrow` check in `forceWithdraw`, deferring forced exits and allowing bad debt to accumulate.\n\n---\n\n---\n\nFindings List\n\n| # | Confidence | Title |\n|---|---|---|\n| 1 | [90] | Missing Chainlink staleness and round-completeness validation in custom oracle contracts |\n| 2 | [90] | PendlePT_sUSDe instant redemption first swap hop has no slippage protection |\n| 3 | [85] | DineroWithdrawRequestManager.canFinalizeWithdrawRequest uses inverted finalization condition |\n| 4 | [80] | forceWithdraw accepts attacker-controlled data, enabling MEV sandwich of forced LP exits |\n| 5 | [75] | MorphoLendingRouter.healthFactor truncates borrower debt |\n\n---\n\n## Leads\n\n_Vulnerability trails with concrete code smells where the full exploit path could not be completed in one analysis pass. These are not false positives — they are high-signal leads for manual review. Not scored._\n\n- **Unauthorized position entry via crafted Morpho flash loan** — `MorphoLendingRouter.onMorphoFlashLoan` — Code smells: authorization only checks `msg.sender == MORPHO`; no verification that the flash loan was initiated by this router — An attacker can call `MORPHO.flashLoan(asset, 0, craftedData)` with `onBehalf = victim` to invoke `_enterOrMigrate` with zero deposit; if `mintShares(0, …)` and `setPosition` do not enforce non-zero collateral, the victim is silently locked to this lending router for that vault, blocking use of other routers. Verify whether `mintShares` or `setPosition` reverts on zero-share entry.\n\n- **LP token oracle value: division-before-multiplication amplified by non-18-decimal tokens** — `AbstractLPOracle._calculateLPTokenValue` — Code smells: `tokenClaim = balances[i] * POOL_PRECISION / totalSupply` computed before oracle-price multiplication — For pools pairing an 18-decimal primary with a 6-decimal secondary (e.g., ETH/USDC), the per-LP truncation in `tokenClaim` is scaled up by the oracle price ratio, potentially producing a material understatement of LP collateral value.\n\n- **TimelockUpgradeableProxy upgrade state not cleared after execution** — `TimelockUpgradeableProxy.executeUpgrade` — Code smells: `newImplementation` and `upgradeValidAt` are not zeroed post-upgrade — The upgradeAdmin can call `executeUpgrade` again immediately with the same `newImplementation` and non-empty `data`, re-running initializer logic without waiting the 7-day timelock; particularly dangerous if `data` contains token grants or permission assignments.\n\n- **Partial withdrawal rounding leaves residual yield tokens permanently unclaimable** — `AbstractWithdrawRequestManager.finalizeAndRedeemWithdrawRequest` — Code smells: `tokensWithdrawn * withdrawYieldTokenAmount / s_withdraw.yieldTokenAmount` truncates on every partial call — Across many partial redemptions the sum of floors falls short of `totalWithdraw`, stranding the difference with no recovery path.\n\n- **Fee approximation underestimates for long vault dormancy** — `AbstractYieldStrategy._calculateAdditionalFeesInYieldToken` — Code smells: 3-term Taylor expansion for `e^x` — For `x = feeRate * timeSinceLastFeeAccrual / YEAR ≥ 0.3` (≈3 years at 10% APR), the approximation diverges from `e^x` by a growing margin, allowing fee avoidance by simply not interacting with a vault for extended periods.\n\n- **Dinero requestId nonce not validated in canFinalizeWithdrawRequest** — `DineroWithdrawRequestManager._decodeBatchIds` — Code smells: `requestId = nonce << 240 | initialBatchId << 120 | finalBatchId`, but `canFinalizeWithdrawRequest` only decodes and checks `initialBatchId` / `finalBatchId` — Two accounts whose withdrawals fall in the identical Pirex batch range share indistinguishable decoded IDs; the distinguishing nonce is silently dropped, potentially allowing one account's finalization check to pass under another's batch.\n\n- **redeemNative bypasses 5-minute cooldown for native share holders** — `AbstractYieldStrategy.redeemNative` — Code smells: no `_checkExit` / `COOLDOWN_PERIOD` enforcement; `exitPosition` enforces the cooldown but `redeemNative` does not — Liquidators receiving vault shares via `postLiquidation` can immediately call `redeemNative` without waiting; whether this is intentional is not documented in code or comments, and same-block flash redemption of liquidation proceeds is possible.\n\n---\n\n> ⚠️ This review was performed by an AI assistant. AI analysis can never verify the complete absence of vulnerabilities and no guarantee of security is given. Team security reviews, bug bounty programs, and on-chain monitoring are strongly recommended. For a consultation regarding your projects' security, visit [https://www.pashov.com](https://www.pashov.com)\n"
+}

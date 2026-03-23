@@ -1,0 +1,13 @@
+{
+  "name": "security-audit-skills-benchmark",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Benchmark comparing AI models for Solidity smart contract security auditing using Pashov Skills",
+  "scripts": {
+    "dashboard": "cd dashboard && bun run dev",
+    "dashboard:build": "cd dashboard && bun run build",
+    "bench": "./run-all.sh",
+    "bench:notional": "./run-all.sh notional-finance"
+  },
+  "license": "MIT"
+}

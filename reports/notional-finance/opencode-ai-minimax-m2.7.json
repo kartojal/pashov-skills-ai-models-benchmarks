@@ -1,0 +1,917 @@
+{
+  "metadata": {
+    "model": "minimax/minimax-m2.7",
+    "harness": "opencode",
+    "target": "notional-finance",
+    "timestamp": "2026-03-23T18:40:14.393779+00:00",
+    "duration_seconds": 566,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 56,
+    "critical": 12,
+    "high": 12,
+    "medium": 14,
+    "low": 12,
+    "informational": 6
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Delegatecall to Untrusted Trading Module Implementation",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "delegatecall",
+      "description": "The `_executeTrade` function in AbstractYieldStrategy retrieves the implementation address of TRADING_MODULE proxy using `nProxy.getImplementation()` and then performs a delegatecall to it. If the proxy implementation is changed to a malicious contract, or if there's a race condition between getting the implementation and executing the delegatecall, all funds managed by this strategy could be stolen. Similarly, RewardManagerMixin uses delegatecall to REWARD_MANAGER for `_updateAccountRewards`.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "260-276"
+      },
+      "recommendation": "Consider hardcoding the trading module implementation address or using a verified implementation registry. Alternatively, use a static call with proper return value validation instead of delegatecall.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "Reward Claim Allows Any Caller to Claim for Any Account",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "access-control",
+      "description": "The `claimAccountRewards` function in RewardManagerMixin allows anyone to call it with any account address. While there's a check that if the caller is not a lending router, it uses `balanceOf(account)`, anyone can claim rewards on behalf of another account, potentially front-running the account owner's claim.",
+      "location": {
+        "file": "src/rewards/RewardManagerMixin.sol",
+        "lines": "82-99"
+      },
+      "recommendation": "Add a check that ensures only the account owner or authorized operators can claim rewards. Consider adding a require(msg.sender == account || isApproved[account][msg.sender]) check.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "LP Oracle Price Manipulation via Flash Loans",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "oracle-manipulation",
+      "description": "In AbstractLPOracle and Curve2TokenOracle, the spot prices are retrieved directly from Curve pools (`ICurvePool(LP_TOKEN).get_dy()`) in the same transaction context where they are compared against oracle prices. An attacker could use a flash loan to manipulate the Curve pool spot price within a single transaction, passing the deviation check and receiving an incorrect LP token valuation. The `dyAmount` parameter is configurable but fixed at deployment time.",
+      "location": {
+        "file": "src/oracles/Curve2TokenOracle.sol",
+        "lines": "61-67"
+      },
+      "recommendation": "Consider using time-weighted average prices (TWAP) from the Curve pool instead of instant spot prices. Alternatively, use a separate oracle for spot prices that can't be flash loan manipulated.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "Morpho Callback Authentication Only Checks msg.sender",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "access-control",
+      "description": "The Morpho callback functions `onMorphoFlashLoan`, `onMorphoRepay`, and `onMorphoLiquidate` only verify that `msg.sender == address(MORPHO)`. While Morpho controls who can call these callbacks, this doesn't verify the original initiator of the flash loan. If Morpho's callback mechanism has any vulnerabilities or if there's any way to trick Morpho into calling these with crafted data, the router could be exploited.",
+      "location": {
+        "file": "src/routers/MorphoLendingRouter.sol",
+        "lines": "82-102, 175-200, 214-228"
+      },
+      "recommendation": "Consider adding additional authentication such as a nonce or verifying the encoded data contains expected values from the original call. Ensure Morpho callbacks properly validate the initiator.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "Unsafe Delegatecall in WithdrawRequestManager",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "delegatecall",
+      "description": "The `_executeTrade` function in AbstractWithdrawRequestManager uses delegatecall to execute trades via the TRADING_MODULE. This is the same vulnerability pattern as in AbstractYieldStrategy but in a separate code path for withdraw requests.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "250-262"
+      },
+      "recommendation": "Same recommendation as F-001. Consolidate trade execution logic to avoid multiple delegatecall attack surfaces.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-006",
+      "title": "Flash Loan in _flashBorrowAndEnter Doesn't Validate Amount",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "flash-loan-attack",
+      "description": "The `_flashBorrowAndEnter` function in MorphoLendingRouter initiates a flash loan but doesn't validate that the borrowed amount matches the expected `borrowAmount`. The callback `onMorphoFlashLoan` receives the `assets` amount which could differ from `borrowAmount` if Morpho's flash loan mechanism behaves unexpectedly or if there's a callback reentrancy vector.",
+      "location": {
+        "file": "src/routers/MorphoLendingRouter.sol",
+        "lines": "74-82"
+      },
+      "recommendation": "Add validation in onMorphoFlashLoan that the received assets amount equals the expected borrowAmount from the encoded data.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-007",
+      "title": "Withdrawal Request Can Be Front-Run in convertToAssets",
+      "severity": "critical",
+      "confidence": "medium",
+      "category": "front-running",
+      "description": "In AbstractSingleSidedLP's `convertToAssets`, there's a race condition. The function checks if `t_CurrentAccount` has a pending withdraw request using `_isWithdrawRequestPending(t_CurrentAccount)`. If a malicious lending router or an attacker can manipulate the timing of when t_CurrentAccount is set vs when the valuation occurs, they could force the use of a different valuation path (withdraw request value vs normal value), potentially leading to incorrect collateral calculations.",
+      "location": {
+        "file": "src/single-sided-lp/AbstractSingleSidedLP.sol",
+        "lines": "280-286"
+      },
+      "recommendation": "Ensure the current account state is consistently set and validated throughout the entire valuation process. Consider snapshotting the state at the beginning of transactions.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-008",
+      "title": "Reward Calculation Overflow in _getAccumulatedRewardViaEmissionRate",
+      "severity": "critical",
+      "confidence": "medium",
+      "category": "integer-overflow",
+      "description": "In AbstractRewardManager._getAccumulatedRewardViaEmissionRate, the calculation `timeSinceLastAccumulation * DEFAULT_PRECISION * state.emissionRatePerYear` can overflow. While there are checks for `emissionRatePerYear == 0` and `effectiveSupplyBefore > 0`, when emission rates are high and time periods are long, this multiplication could overflow uint256, causing incorrect reward calculations or potential loss of funds.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "220-235"
+      },
+      "recommendation": "Add SafeMath or use checked arithmetic. Consider adding bounds checks on emissionRatePerYear to prevent overflow. Use a safer order of operations or implement overflow protection.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-009",
+      "title": "Unsafe Delegatecall Fallback in RewardManagerMixin",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "delegatecall",
+      "description": "The fallback function in RewardManagerMixin delegates ALL calls to the REWARD_MANAGER except for updateAccountRewards. This creates a massive attack surface. Any function signature that matches the reward manager's interface will be executed with the vault's context (including its token balances, permissions, etc.).",
+      "location": {
+        "file": "src/rewards/RewardManagerMixin.sol",
+        "lines": "101-112"
+      },
+      "recommendation": "Remove the fallback function entirely or whitelist only specific, carefully validated function selectors. Consider using a structured approach for reward manager interactions.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-010",
+      "title": "Race Condition in Withdraw Request Tokenization",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "reentrancy",
+      "description": "In AbstractWithdrawRequestManager.tokenizeWithdrawRequest, the function modifies storage variables and emits an event, but performs multiple external calls (via token transfers potentially triggered by the vault). If the liquidation process triggers a reentrancy into tokenizeWithdrawRequest, the storage state could be corrupted. There's no reentrancy guard on this function.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "147-186"
+      },
+      "recommendation": "Add ReentrancyGuardTransient to AbstractWithdrawRequestManager or at least to the tokenizeWithdrawRequest function.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-011",
+      "title": "No Reentrancy Protection on AbstractWithdrawRequestManager",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "reentrancy",
+      "description": "AbstractWithdrawRequestManager performs external calls via `_executeTrade` and `_finalizeWithdrawImpl`, and transfers tokens via safeTransfer. Without ReentrancyGuardTransient, these functions are vulnerable to reentrancy attacks where malicious tokens or contracts could re-enter the contract during the callback phase.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "1-280"
+      },
+      "recommendation": "Add ReentrancyGuardTransient to the contract inheritance and apply it to all state-changing functions that perform external calls.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-012",
+      "title": "Flash Loan Could Bypass _checkPoolShare",
+      "severity": "critical",
+      "confidence": "medium",
+      "category": "flash-loan-attack",
+      "description": "In AbstractSingleSidedLP, the `_checkPoolShare` function checks that the vault doesn't own too large a share of the LP pool. However, this check happens AFTER the deposit is already made via `_joinPoolAndStake`. If the pool share is exceeded, the transaction reverts, but an attacker could use flash loans to temporarily inflate the pool supply, bypass the check, and then deflate it, leaving the vault with an oversized position.",
+      "location": {
+        "file": "src/single-sided-lp/AbstractSingleSidedLP.sol",
+        "lines": "120-130"
+      },
+      "recommendation": "Consider adding a check at the beginning of minting to verify pool share won't be exceeded. Use a pessimistic estimate of pool supply.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-013",
+      "title": "Sequencer Uptime Oracle Check Can Be Bypassed",
+      "severity": "high",
+      "confidence": "high",
+      "category": "oracle-manipulation",
+      "description": "In AbstractCustomOracle._checkSequencer, if `sequencerUptimeOracle` is set to address(0), the entire sequencer check is skipped. This means the price feed could be used even when the L2 sequencer is down, potentially leading to stale or manipulated prices being used for critical calculations.",
+      "location": {
+        "file": "src/oracles/AbstractCustomOracle.sol",
+        "lines": "27-36"
+      },
+      "recommendation": "Make the sequencer check mandatory or revert if no sequencer oracle is provided. Consider reverting if the sequencer oracle address is address(0) rather than skipping the check.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-014",
+      "title": "Pendle Oracle Cardinality Check Happens After PT is Mintable",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "oracle-manipulation",
+      "description": "In PendlePTOracle constructor, the cardinality check ensures `!increaseCardinalityRequired && oldestObservationSatisfied`, but this only verifies that TWAP data exists NOW. The PT token can still be deposited even if the oracle becomes unhealthy later. There's no ongoing check during deposits.",
+      "location": {
+        "file": "src/oracles/PendlePTOracle.sol",
+        "lines": "41-43"
+      },
+      "recommendation": "Add a re-entrant check in _mintYieldTokens or _calculateBaseToQuote to verify oracle state is still valid before processing any operations.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-015",
+      "title": "Unsafe Downcast to uint120 in Withdraw Request Storage",
+      "severity": "high",
+      "confidence": "high",
+      "category": "integer-overflow",
+      "description": "Multiple instances of `.toUint120()` cast in AbstractWithdrawRequestManager. If `yieldTokenAmount` or `sharesAmount` exceeds uint120 max (approximately 1.03e36), the conversion will silently truncate the value, causing loss of funds. While unlikely with standard tokens, malicious or buggy integrations could trigger this.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "106, 108, 158, 160"
+      },
+      "recommendation": "Add explicit require statements checking the value fits within uint120 before casting. Use SafeCast library.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-016",
+      "title": "Unchecked Array Bounds in Trade Execution",
+      "severity": "high",
+      "confidence": "high",
+      "category": "array-access",
+      "description": "In AbstractSingleSidedLP._executeDepositTrades and _executeRedemptionTrades, the code iterates through amounts/exitBalances but accesses redemptionTrades[i] and depositTrades[i] without checking if these arrays have the same length. If the lengths mismatch, it could access uninitialized data or revert unexpectedly.",
+      "location": {
+        "file": "src/single-sided-lp/AbstractSingleSidedLP.sol",
+        "lines": "148-168, 171-193"
+      },
+      "recommendation": "Add require statements to verify that amounts.length == depositTrades.length and exitBalances.length == redemptionTrades.length before iterating.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-017",
+      "title": "Stale Price in Price Calculation After Integer Overflow Check",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "integer-overflow",
+      "description": "In AbstractYieldStrategy.price(), the calculation `convertToAssets(SHARE_PRECISION) * (10 ** (36 - 24))` could overflow if `convertToAssets` returns a very large value. While the expression `(36 - 24)` is hardcoded to 12, if convertToAssets returns a value > type(uint256).max / 1e12, overflow occurs. This would cause the oracle to return an incorrect (wrapped) price.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "83-85"
+      },
+      "recommendation": "Add overflow protection using SafeMath or checked arithmetic. Consider reordering the multiplication to divide first if possible.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-018",
+      "title": "Approval Front-Running Risk",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "front-running",
+      "description": "The setApproval function allows setting operator approvals. While OpenZeppelin's SafeERC20 mitigates some risks, there's no scheduled approval or nonce mechanism. An operator could potentially front-run approval changes. Additionally, infinite approvals are granted which is a best practice concern.",
+      "location": {
+        "file": "src/routers/AbstractLendingRouter.sol",
+        "lines": "33-36"
+      },
+      "recommendation": "Consider implementing a two-step approval process where the operator must claim the approval. Use safeApprove with a zero-then-non-zero pattern.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-019",
+      "title": "Force Withdraw Bypasses Cooldown Period",
+      "severity": "high",
+      "confidence": "high",
+      "category": "access-control",
+      "description": "The forceWithdraw function in AbstractLendingRouter allows anyone to force withdraw an account's position if their health factor is negative. While there's a check for negative health factor, this could be used to grief accounts by forcing their position to be liquidated at unfavorable prices. There's no limit on who can call forceWithdraw.",
+      "location": {
+        "file": "src/routers/AbstractLendingRouter.sol",
+        "lines": "141-152"
+      },
+      "recommendation": "Consider restricting forceWithdraw to only lending routers or implementing a delay before forceWithdraw becomes callable.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-020",
+      "title": "Impermanent Loss Not Accounted For in LP Strategies",
+      "severity": "high",
+      "confidence": "high",
+      "category": "economic-exploit",
+      "description": "The CurveConvex2Token and AbstractSingleSidedLP strategies deposit into LP pools. The convertToAssets function returns the value based on LP token holdings, but doesn't account for impermanent loss that may have occurred. Users could have less value than their initial deposit without this being reflected in their share value.",
+      "location": {
+        "file": "src/single-sided-lp/AbstractSingleSidedLP.sol",
+        "lines": "280-286"
+      },
+      "recommendation": "Document this behavior clearly. Consider implementing IL tracking or adding buffers to protect against IL.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-021",
+      "title": "Clear Position Only Called When Collateral is Zero",
+      "severity": "high",
+      "confidence": "high",
+      "category": "access-control",
+      "description": "In AbstractLendingRouter.exitPosition, clearPosition is only called when `balanceOfCollateral == 0`. If there's any rounding error or dust left in the position, the position won't be cleared. This could lock accounts into a state where they can't enter new positions on that vault.",
+      "location": {
+        "file": "src/routers/AbstractLendingRouter.sol",
+        "lines": "97-99"
+      },
+      "recommendation": "Consider clearing positions when sharesToRedeem equals balance, even if there's dust. Or set a minimum dust threshold.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-022",
+      "title": "Fee Calculation Precision Loss",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "precision-loss",
+      "description": "The Taylor approximation in _calculateAdditionalFeesInYieldToken uses only the first 4 terms. For larger values of x (higher fee rates or longer time periods), this approximation becomes less accurate, potentially leading to fee calculation discrepancies. Small amounts may also be lost due to rounding down during division.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "216-228"
+      },
+      "recommendation": "Consider using a more accurate calculation method or adding compensating mechanisms for rounding losses.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-023",
+      "title": "Multiple Withdraw Requests Per Account Not Prevented",
+      "severity": "high",
+      "confidence": "high",
+      "category": "state-consistency",
+      "description": "While AbstractWithdrawRequestManager.initiateWithdraw checks for existing requests via `accountWithdraw.requestId != 0`, this only applies per vault. An account could have pending withdraw requests on multiple vaults simultaneously, and there's no global accounting for total exposure. Additionally, _isWithdrawRequestPending in AbstractYieldStrategy only checks one withdrawRequestManager.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "99-115"
+      },
+      "recommendation": "Consider tracking total pending withdraw value across all vaults or implementing a maximum pending withdraw threshold per account.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-024",
+      "title": "No Validation on Staking Token Balance Changes",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "state-consistency",
+      "description": "In AbstractStakingStrategy._mintYieldTokens, after calling stakeTokens on the withdrawRequestManager, the function doesn't verify that the expected amount of yield tokens was received. If stakeTokens mints less than expected (due to slippage or fees), the share calculation will be incorrect.",
+      "location": {
+        "file": "src/staking/AbstractStakingStrategy.sol",
+        "lines": "54-58"
+      },
+      "recommendation": "Add a check to verify the actual yield token amount received matches expectations, or adjust share calculations accordingly.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-025",
+      "title": "Hardcoded Contract Addresses in Constants",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "centralization",
+      "description": "The Constants.sol file contains hardcoded addresses for WETH (0xC02aa...), ADDRESS_REGISTRY (0x5615dEB...), and other critical contracts. If any of these addresses need to be changed (e.g., due to a bug or upgrade), the entire contract would need to be redeployed.",
+      "location": {
+        "file": "src/utils/Constants.sol",
+        "lines": "18-19"
+      },
+      "recommendation": "Consider using a proxy pattern for critical addresses or implementing an address provider that can be updated by governance.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-026",
+      "title": "Single Oracle Dependency for All Valuations",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "oracle-manipulation",
+      "description": "All token valuations in the system rely on TRADING_MODULE.getOraclePrice for price data. If this oracle has issues (stale data, manipulation, downtime), all valuations across all strategies would be affected simultaneously.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "96-99"
+      },
+      "recommendation": "Consider implementing fallback oracle mechanisms or circuit breakers that pause operations if oracle data becomes unreliable.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-027",
+      "title": "PT Expiration Check After Transfer in PendlePT",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "state-consistency",
+      "description": "In PendlePT._mintYieldTokens, the PT expiration check happens AFTER the function has already potentially done work. The actual swap happens in PendlePTLib.swapExactTokenForPt, so the require(!PT.isExpired()) doesn't actually prevent the swap from happening if PT expires between the check and the actual call.",
+      "location": {
+        "file": "src/staking/PendlePT.sol",
+        "lines": "49-70"
+      },
+      "recommendation": "Move the expiration check to be as close to the actual PT interaction as possible. Consider checking inside the swap function itself.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-028",
+      "title": "Missing Event Emissions for Critical State Changes",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "audit",
+      "description": "Several state-changing operations in AbstractWithdrawRequestManager don't emit events. For example, finalizeRequestManual doesn't emit an event for the finalization. This makes it difficult to track state changes off-chain.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "127-140"
+      },
+      "recommendation": "Add events for all significant state changes to enable proper off-chain monitoring and indexing.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-029",
+      "title": "Slippage Protection Missing in sUSDe Redemption",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "slippage",
+      "description": "In PendlePT_sUSDe._executeInstantRedemption, the first trade (sUSDe to sDAI via Curve V2) uses `limit: 0`, relying on the second leg of the trade to enforce slippage. If the second leg fails, the first leg may execute at an unfavorable rate with no protection.",
+      "location": {
+        "file": "src/staking/PendlePT_sUSDe.sol",
+        "lines": "38-45"
+      },
+      "recommendation": "Add proper slippage protection for both legs of the trade. Consider calculating a minimum output for the sUSDe->sDAI swap.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-030",
+      "title": "Chain ID Check Only on Mainnet Deployment",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "deployment",
+      "description": "StakingStrategy constructor checks `block.chainid == CHAIN_ID_MAINNET` to restrict deployment to mainnet. This means if the contract is accidentally deployed on testnet or another mainnet fork, it will function but with potentially dangerous misconfigurations (wrong addresses in Constants.sol).",
+      "location": {
+        "file": "src/staking/StakingStrategy.sol",
+        "lines": "14-16"
+      },
+      "recommendation": "Consider making this check more explicit or adding a migration path for testnet deployments with appropriate safeguards.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-031",
+      "title": "Unchecked External Call Return Values",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "unhandled-return-values",
+      "description": "Several functions call external contracts without properly checking return values. For example, in CurveConvexLib._stakeLpTokens and _unstakeLpTokens, the Convex calls return bool success but use require(success) which is good, but the Curve gauge deposits/withdrawals don't have explicit return checks.",
+      "location": {
+        "file": "src/single-sided-lp/CurveConvex2Token.sol",
+        "lines": "218-236"
+      },
+      "recommendation": "Standardize return value checking across all external calls. Consider using a library that wraps these calls with consistent error handling.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-032",
+      "title": "TimelockUpgradeableProxy Whitelist Bypass During Pause",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "access-control",
+      "description": "The TimelockUpgradeableProxy allows whitelisting selectors that can be called when paused. If an attacker gains access to the pauseAdmin role, they could whitelist critical functions (like executeUpgrade) and perform malicious upgrades while the proxy appears paused.",
+      "location": {
+        "file": "src/proxy/TimelockUpgradeableProxy.sol",
+        "lines": "82-88"
+      },
+      "recommendation": "Consider limiting which selectors can be whitelisted, or require multiple approvals for whitelist changes during paused state.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-033",
+      "title": "Share Calculation Assumes Constant Exchange Rate",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "precision-loss",
+      "description": "In _mintSharesGivenAssets, the share calculation uses effectiveSupply before minting but the yield tokens have already been minted. If the yield token to asset exchange rate changes between _mintYieldTokens and the share calculation (due to external trades), the share calculation will be inaccurate.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "282-296"
+      },
+      "recommendation": "Snapshot the yield token balance immediately after minting and before calculating shares. Ensure no external calls happen between minting and share calculation.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-034",
+      "title": "No Maximum on Fee Rate Input",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "validation",
+      "description": "The feeRate parameter in AbstractYieldStrategy constructor has no upper bound check. While DEFAULT_PRECISION suggests 100%, a misconfigured deployment could set an impossibly high fee rate that effectively drains user funds through accrued fees.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "49-56"
+      },
+      "recommendation": "Add a require statement limiting feeRate to a reasonable maximum (e.g., 50% = 0.5 * DEFAULT_PRECISION).",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-035",
+      "title": "Insufficient Validation of DexId in Trade Execution",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "validation",
+      "description": "The dexId parameter in _executeTrade is passed directly to TRADING_MODULE.executeTrade without validation. If an invalid dexId is provided, the trade could fail unexpectedly or route to an unintended DEX.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "260-276"
+      },
+      "recommendation": "Add validation that dexId is within acceptable bounds or that the corresponding DEX is authorized for this vault.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-036",
+      "title": "Migrate From Zero Address Not Validated",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "validation",
+      "description": "In AbstractLendingRouter._enterOrMigrate, when migrateFrom is address(0), the code proceeds to call IYieldStrategy.vault.mintShares. There's no explicit check that migrateFrom is a valid lending router when it's not address(0), only that it 'isLendingRouter'.",
+      "location": {
+        "file": "src/routers/AbstractLendingRouter.sol",
+        "lines": "152-165"
+      },
+      "recommendation": "Add explicit validation for the migrateFrom address and ensure proper cleanup of the old position.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-037",
+      "title": "No Bounds Check on Array Indices in getWithdrawRequestValue",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "array-access",
+      "description": "In AbstractSingleSidedLP.getWithdrawRequestValue (via BaseLPLib), the function iterates through all tokens and calls getWithdrawRequestValue on each manager. If any of the withdraw request managers return corrupted data or if there's a mismatch between TOKENS() and registered managers, the calculation could be incorrect.",
+      "location": {
+        "file": "src/single-sided-lp/AbstractSingleSidedLP.sol",
+        "lines": "304-316"
+      },
+      "recommendation": "Add validation that getWithdrawRequestValue returns consistent data. Consider adding bounds checks on array operations.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-038",
+      "title": "Curve V2 remove_liquidity Doesn't Return Values",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "external-calls",
+      "description": "In CurveConvexLib._exitPool, for Curve V2, the function measures balances before and after to calculate exit amounts. This approach assumes no other transfers happen during the call, which may not hold true in complex scenarios.",
+      "location": {
+        "file": "src/single-sided-lp/CurveConvex2Token.sol",
+        "lines": "196-206"
+      },
+      "recommendation": "Consider adding additional safety checks or using a different exit method if available. Document this limitation clearly.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-039",
+      "title": "Unused Variable in _burnShares",
+      "severity": "low",
+      "confidence": "high",
+      "category": "audit",
+      "description": "The sharesHeld parameter in _burnShares is marked with a comment indicating it's unused. While this isn't a security issue, it suggests the interface may have changed.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "299-303"
+      },
+      "recommendation": "Either remove the parameter or document why it's kept in the interface.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-040",
+      "title": "Magic Number in Price Calculation",
+      "severity": "low",
+      "confidence": "high",
+      "category": "code-quality",
+      "description": "The expression `10 ** (36 - 24)` in price() calculations uses magic numbers. While the calculation appears correct (36 - 24 = 12), it's not immediately clear why these specific values are used.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "83-85, 109-111"
+      },
+      "recommendation": "Define named constants for these precision adjustments to improve readability.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-041",
+      "title": "Inconsistent Error Handling Patterns",
+      "severity": "low",
+      "confidence": "medium",
+      "category": "code-quality",
+      "description": "Some places use custom error types (revert CustomError()), while others use require() with string messages. This inconsistency makes the codebase harder to audit.",
+      "location": {
+        "file": "Multiple files",
+        "lines": "Various"
+      },
+      "recommendation": "Standardize on custom errors throughout the codebase for consistency.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-042",
+      "title": "No Event for Emergency Token Rescue",
+      "severity": "low",
+      "confidence": "medium",
+      "category": "audit",
+      "description": "The rescueTokens function in ClonedCooldownHolder allows the manager to recover any tokens. While this is intended functionality, there's no event emitted to track these recoveries.",
+      "location": {
+        "file": "src/withdraws/ClonedCooldownHolder.sol",
+        "lines": "18-20"
+      },
+      "recommendation": "Add an event RescueTokens(address indexed token, address indexed receiver, uint256 amount) to enable monitoring of emergency recoveries.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-043",
+      "title": "Missing Zero Address Check in PendlePT Oracle",
+      "severity": "low",
+      "confidence": "low",
+      "category": "validation",
+      "description": "The baseToUSDOracle in PendlePTOracle is immutable and stored without validation. While the Chainlink latestRoundData check handles some errors, if the oracle is address(0), the call would fail.",
+      "location": {
+        "file": "src/oracles/PendlePTOracle.sol",
+        "lines": "27-36"
+      },
+      "recommendation": "Add a require statement in the constructor to ensure baseToUSDOracle != address(0).",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-044",
+      "title": "Potential Divergence in PendlePT Oracle Decimals Handling",
+      "severity": "low",
+      "confidence": "low",
+      "category": "precision-loss",
+      "description": "The constructor checks _baseDecimals <= 18 and _ptDecimals <= 18, but the actual calculation in _calculateBaseToQuote doesn't account for cases where decimals are less than 18, potentially causing precision loss.",
+      "location": {
+        "file": "src/oracles/PendlePTOracle.sol",
+        "lines": "60-72"
+      },
+      "recommendation": "Add proper scaling for tokens with less than 18 decimals in the _calculateBaseToQuote function.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-045",
+      "title": "GenericERC20WithdrawRequestManager Returns Unchecked Token Amount",
+      "severity": "low",
+      "confidence": "medium",
+      "category": "state-consistency",
+      "description": "In GenericERC20WithdrawRequestManager._finalizeWithdrawImpl, the tokensToWithdraw is retrieved from storage and immediately returned as tokensClaimed without validation. If the actual token balance is less than the stored amount, the contract could return more tokens than it holds.",
+      "location": {
+        "file": "src/withdraws/GenericERC20.sol",
+        "lines": "35-42"
+      },
+      "recommendation": "Add a check that the contract holds sufficient tokens before returning tokensClaimed, or adjust based on actual balance.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-046",
+      "title": "No Pause on Emergency Claims",
+      "severity": "low",
+      "confidence": "medium",
+      "category": "access-control",
+      "description": "The claimAccountRewards function in RewardManagerMixin doesn't go through the lending router and may not be pausable via the TimelockUpgradeableProxy. This could allow claims even when the system is paused.",
+      "location": {
+        "file": "src/rewards/RewardManagerMixin.sol",
+        "lines": "82-99"
+      },
+      "recommendation": "Ensure claimAccountRewards can be paused or that it respects the system's paused state.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-047",
+      "title": "No Maximum on Reward Emission Rate",
+      "severity": "low",
+      "confidence": "medium",
+      "category": "validation",
+      "description": "In AbstractRewardManager.updateRewardToken, the emissionRatePerYear parameter has no upper bound. An upgraded implementation could set an extremely high emission rate, rapidly diluting existing holders.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "66-103"
+      },
+      "recommendation": "Consider adding a maximum emission rate limit that cannot be exceeded without a full governance vote.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-048",
+      "title": "Unchecked Return Value from Convex Operations",
+      "severity": "low",
+      "confidence": "medium",
+      "category": "unhandled-return-values",
+      "description": "In CurveConvexLib, the Convex booster deposit returns a bool success which is checked with require(), but the Curve gauge deposit doesn't return a value. If the gauge deposit fails silently, tokens could be lost.",
+      "location": {
+        "file": "src/single-sided-lp/CurveConvex2Token.sol",
+        "lines": "220-227"
+      },
+      "recommendation": "Verify Curve gauge deposit behavior and add appropriate error handling if it can fail silently.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-049",
+      "title": "Unsafe ERC20 Transfer in reward Claim",
+      "severity": "low",
+      "confidence": "high",
+      "category": "unhandled-return-values",
+      "description": "In AbstractRewardManager._claimRewardToken, the transfer uses try/catch but doesn't properly handle the case where transfer returns false. The emit VaultRewardTransfer(rewardToken, account, 0) hides the failure.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "167-184"
+      },
+      "recommendation": "Consider reverting on failed transfers or implementing a claiming mechanism where users must actively claim failed rewards.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-050",
+      "title": "No Expiry Validation on Trade Deadlines",
+      "severity": "low",
+      "confidence": "low",
+      "category": "validation",
+      "description": "Trade execution uses `block.timestamp` as deadline, which means trades never expire. This could lead to trades executing at unfavorable rates if the transaction sits in the mempool for a long time.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "264-265"
+      },
+      "recommendation": "Consider using a configurable deadline or minimum deadline to protect against long mempool waits.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-051",
+      "title": "Duplicate Import Statement",
+      "severity": "informational",
+      "confidence": "high",
+      "category": "code-quality",
+      "description": "The file AbstractYieldStrategy.sol imports ADDRESS_REGISTRY twice - once in the main import statement and once separately. While this doesn't cause issues, it suggests copy-paste errors.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "1-15"
+      },
+      "recommendation": "Remove the duplicate import statement.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-052",
+      "title": "Incomplete NatSpec Documentation",
+      "severity": "informational",
+      "confidence": "medium",
+      "category": "documentation",
+      "description": "Several functions have incomplete or missing NatSpec documentation. For example, virtual functions should document their override requirements.",
+      "location": {
+        "file": "Multiple files",
+        "lines": "Various"
+      },
+      "recommendation": "Add complete NatSpec documentation for all public and external functions, including parameter descriptions and return value documentation.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-053",
+      "title": "Contract Size May Exceed Limit",
+      "severity": "informational",
+      "confidence": "medium",
+      "category": "deployment",
+      "description": "With multiple inheritance chains and complex functionality, some contracts may approach the EIP-170 contract size limit of 24KB. This is especially concerning for CurveConvex2Token which inherits from multiple abstract contracts.",
+      "location": {
+        "file": "src/single-sided-lp/CurveConvex2Token.sol",
+        "lines": "1-100"
+      },
+      "recommendation": "Monitor contract sizes during development and consider splitting large contracts into smaller, modular components.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-054",
+      "title": "No Migration Path Documented",
+      "severity": "informational",
+      "confidence": "medium",
+      "category": "documentation",
+      "description": "While there is a migratePosition function, there's no documented procedure for how to handle failed migrations or how to recover if a migration is interrupted.",
+      "location": {
+        "file": "src/routers/AbstractLendingRouter.sol",
+        "lines": "59-65"
+      },
+      "recommendation": "Document the complete migration procedure including failure modes and recovery options.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-055",
+      "title": "Transient Storage Slot Collision Potential",
+      "severity": "informational",
+      "confidence": "low",
+      "category": "upgradeability",
+      "description": "The contract uses custom storage slots for transient variables. While this is intentional for EIP-1153 compatibility, if any future upgrade adds storage at conflicting slots, data corruption could occur silently.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "36-47"
+      },
+      "recommendation": "Document all custom storage slot assignments and consider using a structured approach like Nick Randall's storage pattern for upgrade safety.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    },
+    {
+      "id": "F-056",
+      "title": "No Test Coverage Indication",
+      "severity": "informational",
+      "confidence": "low",
+      "category": "audit",
+      "description": "The code review cannot confirm whether comprehensive test coverage exists for all the identified vulnerabilities and edge cases. This audit should be supplemented with coverage analysis from test runs.",
+      "location": {
+        "file": "Multiple files",
+        "lines": "N/A"
+      },
+      "recommendation": "Ensure comprehensive test coverage including unit tests, integration tests, and invariant tests covering all identified security concerns.",
+      "agents_reporting": [
+        "opencode"
+      ]
+    }
+  ],
+  "raw_output": "# Security Audit Report\n\nI've conducted a comprehensive security analysis of all provided Solidity contracts. Below are my findings organized by severity.\n\n## Critical Issues\n\n```json\n[\n  {\n    \"id\": \"F-001\",\n    \"title\": \"Delegatecall to Untrusted Trading Module Implementation\",\n    \"severity\": \"critical\",\n    \"confidence\": \"high\",\n    \"category\": \"delegatecall\",\n    \"description\": \"The `_executeTrade` function in AbstractYieldStrategy retrieves the implementation address of TRADING_MODULE proxy using `nProxy.getImplementation()` and then performs a delegatecall to it. If the proxy implementation is changed to a malicious contract, or if there's a race condition between getting the implementation and executing the delegatecall, all funds managed by this strategy could be stolen. Similarly, RewardManagerMixin uses delegatecall to REWARD_MANAGER for `_updateAccountRewards`.\",\n    \"file\": \"src/AbstractYieldStrategy.sol\",\n    \"lines\": \"260-276\",\n    \"recommendation\": \"Consider hardcoding the trading module implementation address or using a verified implementation registry. Alternatively, use a static call with proper return value validation instead of delegatecall.\"\n  },\n  {\n    \"id\": \"F-002\",\n    \"title\": \"Reward Claim Allows Any Caller to Claim for Any Account\",\n    \"severity\": \"critical\",\n    \"confidence\": \"high\",\n    \"category\": \"access-control\",\n    \"description\": \"The `claimAccountRewards` function in RewardManagerMixin allows anyone to call it with any account address. While there's a check that if the caller is not a lending router, it uses `balanceOf(account)`, anyone can claim rewards on behalf of another account, potentially front-running the account owner's claim.\",\n    \"file\": \"src/rewards/RewardManagerMixin.sol\",\n    \"lines\": \"82-99\",\n    \"recommendation\": \"Add a check that ensures only the account owner or authorized operators can claim rewards. Consider adding a require(msg.sender == account || isApproved[account][msg.sender]) check.\"\n  },\n  {\n    \"id\": \"F-003\",\n    \"title\": \"LP Oracle Price Manipulation via Flash Loans\",\n    \"severity\": \"critical\",\n    \"confidence\": \"high\",\n    \"category\": \"oracle-manipulation\",\n    \"description\": \"In AbstractLPOracle and Curve2TokenOracle, the spot prices are retrieved directly from Curve pools (`ICurvePool(LP_TOKEN).get_dy()`) in the same transaction context where they are compared against oracle prices. An attacker could use a flash loan to manipulate the Curve pool spot price within a single transaction, passing the deviation check and receiving an incorrect LP token valuation. The `dyAmount` parameter is configurable but fixed at deployment time.\",\n    \"file\": \"src/oracles/Curve2TokenOracle.sol\",\n    \"lines\": \"61-67\",\n    \"recommendation\": \"Consider using time-weighted average prices (TWAP) from the Curve pool instead of instant spot prices. Alternatively, use a separate oracle for spot prices that can't be flash loan manipulated.\"\n  },\n  {\n    \"id\": \"F-004\",\n    \"title\": \"Morpho Callback Authentication Only Checks msg.sender\",\n    \"severity\": \"critical\",\n    \"confidence\": \"high\",\n    \"category\": \"access-control\",\n    \"description\": \"The Morpho callback functions `onMorphoFlashLoan`, `onMorphoRepay`, and `onMorphoLiquidate` only verify that `msg.sender == address(MORPHO)`. While Morpho controls who can call these callbacks, this doesn't verify the original initiator of the flash loan. If Morpho's callback mechanism has any vulnerabilities or if there's any way to trick Morpho into calling these with crafted data, the router could be exploited.\",\n    \"file\": \"src/routers/MorphoLendingRouter.sol\",\n    \"lines\": \"82-102, 175-200, 214-228\",\n    \"recommendation\": \"Consider adding additional authentication such as a nonce or verifying the encoded data contains expected values from the original call. Ensure Morpho callbacks properly validate the initiator.\"\n  },\n  {\n    \"id\": \"F-005\",\n    \"title\": \"Unsafe Delegatecall in WithdrawRequestManager\",\n    \"severity\": \"critical\",\n    \"confidence\": \"high\",\n    \"category\": \"delegatecall\",\n    \"description\": \"The `_executeTrade` function in AbstractWithdrawRequestManager uses delegatecall to execute trades via the TRADING_MODULE. This is the same vulnerability pattern as in AbstractYieldStrategy but in a separate code path for withdraw requests.\",\n    \"file\": \"src/withdraws/AbstractWithdrawRequestManager.sol\",\n    \"lines\": \"250-262\",\n    \"recommendation\": \"Same recommendation as F-001. Consolidate trade execution logic to avoid multiple delegatecall attack surfaces.\"\n  },\n\n  {\n    \"id\": \"F-006\",\n    \"title\": \"Flash Loan in _flashBorrowAndEnter Doesn't Validate Amount\",\n    \"severity\": \"critical\",\n    \"confidence\": \"high\",\n    \"category\": \"flash-loan-attack\",\n    \"description\": \"The `_flashBorrowAndEnter` function in MorphoLendingRouter initiates a flash loan but doesn't validate that the borrowed amount matches the expected `borrowAmount`. The callback `onMorphoFlashLoan` receives the `assets` amount which could differ from `borrowAmount` if Morpho's flash loan mechanism behaves unexpectedly or if there's a callback reentrancy vector.\",\n    \"file\": \"src/routers/MorphoLendingRouter.sol\",\n    \"lines\": \"74-82\",\n    \"recommendation\": \"Add validation in onMorphoFlashLoan that the received assets amount equals the expected borrowAmount from the encoded data.\"\n  },\n\n  {\n    \"id\": \"F-007\",\n    \"title\": \"Withdrawal Request Can Be Front-Run in convertToAssets\",\n    \"severity\": \"critical\",\n    \"confidence\": \"medium\",\n    \"category\": \"front-running\",\n    \"description\": \"In AbstractSingleSidedLP's `convertToAssets`, there's a race condition. The function checks if `t_CurrentAccount` has a pending withdraw request using `_isWithdrawRequestPending(t_CurrentAccount)`. If a malicious lending router or an attacker can manipulate the timing of when t_CurrentAccount is set vs when the valuation occurs, they could force the use of a different valuation path (withdraw request value vs normal value), potentially leading to incorrect collateral calculations.\",\n    \"file\": \"src/single-sided-lp/AbstractSingleSidedLP.sol\",\n    \"lines\": \"280-286\",\n    \"recommendation\": \"Ensure the current account state is consistently set and validated throughout the entire valuation process. Consider snapshotting the state at the beginning of transactions.\"\n  },\n\n  {\n    \"id\": \"F-008\",\n    \"title\": \"Reward Calculation Overflow in _getAccumulatedRewardViaEmissionRate\",\n    \"severity\": \"critical\",\n    \"confidence\": \"medium\",\n    \"category\": \"integer-overflow\",\n    \"description\": \"In AbstractRewardManager._getAccumulatedRewardViaEmissionRate, the calculation `timeSinceLastAccumulation * DEFAULT_PRECISION * state.emissionRatePerYear` can overflow. While there are checks for `emissionRatePerYear == 0` and `effectiveSupplyBefore > 0`, when emission rates are high and time periods are long, this multiplication could overflow uint256, causing incorrect reward calculations or potential loss of funds.\",\n    \"file\": \"src/rewards/AbstractRewardManager.sol\",\n    \"lines\": \"220-235\",\n    \"recommendation\": \"Add SafeMath or use checked arithmetic. Consider adding bounds checks on emissionRatePerYear to prevent overflow. Use a safer order of operations or implement overflow protection.\"\n  },\n\n  {\n    \"id\": \"F-009\",\n    \"title\": \"Unsafe Delegatecall Fallback in RewardManagerMixin\",\n    \"severity\": \"critical\",\n    \"confidence\": \"high\",\n    \"category\": \"delegatecall\",\n    \"description\": \"The fallback function in RewardManagerMixin delegates ALL calls to the REWARD_MANAGER except for updateAccountRewards. This creates a massive attack surface. Any function signature that matches the reward manager's interface will be executed with the vault's context (including its token balances, permissions, etc.).\",\n    \"file\": \"src/rewards/RewardManagerMixin.sol\",\n    \"lines\": \"101-112\",\n    \"recommendation\": \"Remove the fallback function entirely or whitelist only specific, carefully validated function selectors. Consider using a structured approach for reward manager interactions.\"\n  },\n\n  {\n    \"id\": \"F-010\",\n    \"title\": \"Race Condition in Withdraw Request Tokenization\",\n    \"severity\": \"critical\",\n    \"confidence\": \"high\",\n    \"category\": \"reentrancy\",\n    \"description\": \"In AbstractWithdrawRequestManager.tokenizeWithdrawRequest, the function modifies storage variables and emits an event, but performs multiple external calls (via token transfers potentially triggered by the vault). If the liquidation process triggers a reentrancy into tokenizeWithdrawRequest, the storage state could be corrupted. There's no reentrancy guard on this function.\",\n    \"file\": \"src/withdraws/AbstractWithdrawRequestManager.sol\",\n    \"lines\": \"147-186\",\n    \"recommendation\": \"Add ReentrancyGuardTransient to AbstractWithdrawRequestManager or at least to the tokenizeWithdrawRequest function.\"\n  },\n\n  {\n    \"id\": \"F-011\",\n    \"title\": \"No Reentrancy Protection on AbstractWithdrawRequestManager\",\n    \"severity\": \"critical\",\n    \"confidence\": \"high\",\n    \"category\": \"reentrancy\",\n    \"description\": \"AbstractWithdrawRequestManager performs external calls via `_executeTrade` and `_finalizeWithdrawImpl`, and transfers tokens via safeTransfer. Without ReentrancyGuardTransient, these functions are vulnerable to reentrancy attacks where malicious tokens or contracts could re-enter the contract during the callback phase.\",\n    \"file\": \"src/withdraws/AbstractWithdrawRequestManager.sol\",\n    \"lines\": \"1-280\",\n    \"recommendation\": \"Add ReentrancyGuardTransient to the contract inheritance and apply it to all state-changing functions that perform external calls.\"\n  },\n\n  {\n    \"id\": \"F-012\",\n    \"title\": \"Flash Loan Could Bypass _checkPoolShare\",\n    \"severity\": \"critical\",\n    \"confidence\": \"medium\",\n    \"category\": \"flash-loan-attack\",\n    \"description\": \"In AbstractSingleSidedLP, the `_checkPoolShare` function checks that the vault doesn't own too large a share of the LP pool. However, this check happens AFTER the deposit is already made via `_joinPoolAndStake`. If the pool share is exceeded, the transaction reverts, but an attacker could use flash loans to temporarily inflate the pool supply, bypass the check, and then deflate it, leaving the vault with an oversized position.\",\n    \"file\": \"src/single-sided-lp/AbstractSingleSidedLP.sol\",\n    \"lines\": \"120-130\",\n    \"recommendation\": \"Consider adding a check at the beginning of minting to verify pool share won't be exceeded. Use a pessimistic estimate of pool supply.\"\n  }\n]\n```\n\n## High Issues\n\n```json\n[\n  {\n    \"id\": \"F-013\",\n    \"title\": \"Sequencer Uptime Oracle Check Can Be Bypassed\",\n    \"severity\": \"high\",\n    \"confidence\": \"high\",\n    \"category\": \"oracle-manipulation\",\n    \"description\": \"In AbstractCustomOracle._checkSequencer, if `sequencerUptimeOracle` is set to address(0), the entire sequencer check is skipped. This means the price feed could be used even when the L2 sequencer is down, potentially leading to stale or manipulated prices being used for critical calculations.\",\n    \"file\": \"src/oracles/AbstractCustomOracle.sol\",\n    \"lines\": \"27-36\",\n    \"recommendation\": \"Make the sequencer check mandatory or revert if no sequencer oracle is provided. Consider reverting if the sequencer oracle address is address(0) rather than skipping the check.\"\n  },\n  {\n    \"id\": \"F-014\",\n    \"title\": \"Pendle Oracle Cardinality Check Happens After PT is Mintable\",\n    \"severity\": \"high\",\n    \"confidence\": \"medium\",\n    \"category\": \"oracle-manipulation\",\n    \"description\": \"In PendlePTOracle constructor, the cardinality check ensures `!increaseCardinalityRequired && oldestObservationSatisfied`, but this only verifies that TWAP data exists NOW. The PT token can still be deposited even if the oracle becomes unhealthy later. There's no ongoing check during deposits.\",\n    \"file\": \"src/oracles/PendlePTOracle.sol\",\n    \"lines\": \"41-43\",\n    \"recommendation\": \"Add a re-entrant check in _mintYieldTokens or _calculateBaseToQuote to verify oracle state is still valid before processing any operations.\"\n  },\n  {\n    \"id\": \"F-015\",\n    \"title\": \"Unsafe Downcast to uint120 in Withdraw Request Storage\",\n    \"severity\": \"high\",\n    \"confidence\": \"high\",\n    \"category\": \"integer-overflow\",\n    \"description\": \"Multiple instances of `.toUint120()` cast in AbstractWithdrawRequestManager. If `yieldTokenAmount` or `sharesAmount` exceeds uint120 max (approximately 1.03e36), the conversion will silently truncate the value, causing loss of funds. While unlikely with standard tokens, malicious or buggy integrations could trigger this.\",\n    \"file\": \"src/withdraws/AbstractWithdrawRequestManager.sol\",\n    \"lines\": \"106, 108, 158, 160\",\n    \"recommendation\": \"Add explicit require statements checking the value fits within uint120 before casting. Use SafeCast library.\"\n  },\n  {\n    \"id\": \"F-016\",\n    \"title\": \"Unchecked Array Bounds in Trade Execution\",\n    \"severity\": \"high\",\n    \"confidence\": \"high\",\n    \"category\": \"array-access\",\n    \"description\": \"In AbstractSingleSidedLP._executeDepositTrades and _executeRedemptionTrades, the code iterates through amounts/exitBalances but accesses redemptionTrades[i] and depositTrades[i] without checking if these arrays have the same length. If the lengths mismatch, it could access uninitialized data or revert unexpectedly.\",\n    \"file\": \"src/single-sided-lp/AbstractSingleSidedLP.sol\",\n    \"lines\": \"148-168, 171-193\",\n    \"recommendation\": \"Add require statements to verify that amounts.length == depositTrades.length and exitBalances.length == redemptionTrades.length before iterating.\"\n  },\n  {\n    \"id\": \"F-017\",\n    \"title\": \"Stale Price in Price Calculation After Integer Overflow Check\",\n    \"severity\": \"high\",\n    \"confidence\": \"medium\",\n    \"category\": \"integer-overflow\",\n    \"description\": \"In AbstractYieldStrategy.price(), the calculation `convertToAssets(SHARE_PRECISION) * (10 ** (36 - 24))` could overflow if `convertToAssets` returns a very large value. While the expression `(36 - 24)` is hardcoded to 12, if convertToAssets returns a value > type(uint256).max / 1e12, overflow occurs. This would cause the oracle to return an incorrect (wrapped) price.\",\n    \"file\": \"src/AbstractYieldStrategy.sol\",\n    \"lines\": \"83-85\",\n    \"recommendation\": \"Add overflow protection using SafeMath or checked arithmetic. Consider reordering the multiplication to divide first if possible.\"\n  },\n  {\n    \"id\": \"F-018\",\n    \"title\": \"Approval Front-Running Risk\",\n    \"severity\": \"high\",\n    \"confidence\": \"medium\",\n    \"category\": \"front-running\",\n    \"description\": \"The setApproval function allows setting operator approvals. While OpenZeppelin's SafeERC20 mitigates some risks, there's no scheduled approval or nonce mechanism. An operator could potentially front-run approval changes. Additionally, infinite approvals are granted which is a best practice concern.\",\n    \"file\": \"src/routers/AbstractLendingRouter.sol\",\n    \"lines\": \"33-36\",\n    \"recommendation\": \"Consider implementing a two-step approval process where the operator must claim the approval. Use safeApprove with a zero-then-non-zero pattern.\"\n  },\n  {\n    \"id\": \"F-019\",\n    \"title\": \"Force Withdraw Bypasses Cooldown Period\",\n    \"severity\": \"high\",\n    \"confidence\": \"high\",\n    \"category\": \"access-control\",\n    \"description\": \"The forceWithdraw function in AbstractLendingRouter allows anyone to force withdraw an account's position if their health factor is negative. While there's a check for negative health factor, this could be used to grief accounts by forcing their position to be liquidated at unfavorable prices. There's no limit on who can call forceWithdraw.\",\n    \"file\": \"src/routers/AbstractLendingRouter.sol\",\n    \"lines\": \"141-152\",\n    \"recommendation\": \"Consider restricting forceWithdraw to only lending routers or implementing a delay before forceWithdraw becomes callable.\"\n  },\n  {\n    \"id\": \"F-020\",\n    \"title\": \"Impermanent Loss Not Accounted For in LP Strategies\",\n    \"severity\": \"high\",\n    \"confidence\": \"high\",\n    \"category\": \"economic-exploit\",\n    \"description\": \"The CurveConvex2Token and AbstractSingleSidedLP strategies deposit into LP pools. The convertToAssets function returns the value based on LP token holdings, but doesn't account for impermanent loss that may have occurred. Users could have less value than their initial deposit without this being reflected in their share value.\",\n    \"file\": \"src/single-sided-lp/AbstractSingleSidedLP.sol\",\n    \"lines\": \"280-286\",\n    \"recommendation\": \"Document this behavior clearly. Consider implementing IL tracking or adding buffers to protect against IL.\"\n  },\n  {\n    \"id\": \"F-021\",\n    \"title\": \"Clear Position Only Called When Collateral is Zero\",\n    \"severity\": \"high\",\n    \"confidence\": \"high\",\n    \"category\": \"access-control\",\n    \"description\": \"In AbstractLendingRouter.exitPosition, clearPosition is only called when `balanceOfCollateral == 0`. If there's any rounding error or dust left in the position, the position won't be cleared. This could lock accounts into a state where they can't enter new positions on that vault.\",\n    \"file\": \"src/routers/AbstractLendingRouter.sol\",\n    \"lines\": \"97-99\",\n    \"recommendation\": \"Consider clearing positions when sharesToRedeem equals balance, even if there's dust. Or set a minimum dust threshold.\"\n  },\n  {\n    \"id\": \"F-022\",\n    \"title\": \"Fee Calculation Precision Loss\",\n    \"severity\": \"high\",\n    \"confidence\": \"medium\",\n    \"category\": \"precision-loss\",\n    \"description\": \"The Taylor approximation in _calculateAdditionalFeesInYieldToken uses only the first 4 terms. For larger values of x (higher fee rates or longer time periods), this approximation becomes less accurate, potentially leading to fee calculation discrepancies. Small amounts may also be lost due to rounding down during division.\",\n    \"file\": \"src/AbstractYieldStrategy.sol\",\n    \"lines\": \"216-228\",\n    \"recommendation\": \"Consider using a more accurate calculation method or adding compensating mechanisms for rounding losses.\"\n  },\n  {\n    \"id\": \"F-023\",\n    \"title\": \"Multiple Withdraw Requests Per Account Not Prevented\",\n    \"severity\": \"high\",\n    \"confidence\": \"high\",\n    \"category\": \"state-consistency\",\n    \"description\": \"While AbstractWithdrawRequestManager.initiateWithdraw checks for existing requests via `accountWithdraw.requestId != 0`, this only applies per vault. An account could have pending withdraw requests on multiple vaults simultaneously, and there's no global accounting for total exposure. Additionally, _isWithdrawRequestPending in AbstractYieldStrategy only checks one withdrawRequestManager.\",\n    \"file\": \"src/withdraws/AbstractWithdrawRequestManager.sol\",\n    \"lines\": \"99-115\",\n    \"recommendation\": \"Consider tracking total pending withdraw value across all vaults or implementing a maximum pending withdraw threshold per account.\"\n  },\n  {\n    \"id\": \"F-024\",\n    \"title\": \"No Validation on Staking Token Balance Changes\",\n    \"severity\": \"high\",\n    \"confidence\": \"medium\",\n    \"category\": \"state-consistency\",\n    \"description\": \"In AbstractStakingStrategy._mintYieldTokens, after calling stakeTokens on the withdrawRequestManager, the function doesn't verify that the expected amount of yield tokens was received. If stakeTokens mints less than expected (due to slippage or fees), the share calculation will be incorrect.\",\n    \"file\": \"src/staking/AbstractStakingStrategy.sol\",\n    \"lines\": \"54-58\",\n    \"recommendation\": \"Add a check to verify the actual yield token amount received matches expectations, or adjust share calculations accordingly.\"\n  }\n]\n```\n\n## Medium Issues\n\n```json\n[\n  {\n    \"id\": \"F-025\",\n    \"title\": \"Hardcoded Contract Addresses in Constants\",\n    \"severity\": \"medium\",\n    \"confidence\": \"high\",\n    \"category\": \"centralization\",\n    \"description\": \"The Constants.sol file contains hardcoded addresses for WETH (0xC02aa...), ADDRESS_REGISTRY (0x5615dEB...), and other critical contracts. If any of these addresses need to be changed (e.g., due to a bug or upgrade), the entire contract would need to be redeployed.\",\n    \"file\": \"src/utils/Constants.sol\",\n    \"lines\": \"18-19\",\n    \"recommendation\": \"Consider using a proxy pattern for critical addresses or implementing an address provider that can be updated by governance.\"\n  },\n  {\n    \"id\": \"F-026\",\n    \"title\": \"Single Oracle Dependency for All Valuations\",\n    \"severity\": \"medium\",\n    \"confidence\": \"high\",\n    \"category\": \"oracle-manipulation\",\n    \"description\": \"All token valuations in the system rely on TRADING_MODULE.getOraclePrice for price data. If this oracle has issues (stale data, manipulation, downtime), all valuations across all strategies would be affected simultaneously.\",\n    \"file\": \"src/AbstractYieldStrategy.sol\",\n    \"lines\": \"96-99\",\n    \"recommendation\": \"Consider implementing fallback oracle mechanisms or circuit breakers that pause operations if oracle data becomes unreliable.\"\n  },\n  {\n    \"id\": \"F-027\",\n    \"title\": \"PT Expiration Check After Transfer in PendlePT\",\n    \"severity\": \"medium\",\n    \"confidence\": \"medium\",\n    \"category\": \"state-consistency\",\n    \"description\": \"In PendlePT._mintYieldTokens, the PT expiration check happens AFTER the function has already potentially done work. The actual swap happens in PendlePTLib.swapExactTokenForPt, so the require(!PT.isExpired()) doesn't actually prevent the swap from happening if PT expires between the check and the actual call.\",\n    \"file\": \"src/staking/PendlePT.sol\",\n    \"lines\": \"49-70\",\n    \"recommendation\": \"Move the expiration check to be as close to the actual PT interaction as possible. Consider checking inside the swap function itself.\"\n  },\n  {\n    \"id\": \"F-028\",\n    \"title\": \"Missing Event Emissions for Critical State Changes\",\n    \"severity\": \"medium\",\n    \"confidence\": \"medium\",\n    \"category\": \"audit\",\n    \"description\": \"Several state-changing operations in AbstractWithdrawRequestManager don't emit events. For example, finalizeRequestManual doesn't emit an event for the finalization. This makes it difficult to track state changes off-chain.\",\n    \"file\": \"src/withdraws/AbstractWithdrawRequestManager.sol\",\n    \"lines\": \"127-140\",\n    \"recommendation\": \"Add events for all significant state changes to enable proper off-chain monitoring and indexing.\"\n  },\n  {\n    \"id\": \"F-029\",\n    \"title\": \"Slippage Protection Missing in sUSDe Redemption\",\n    \"severity\": \"medium\",\n    \"confidence\": \"medium\",\n    \"category\": \"slippage\",\n    \"description\": \"In PendlePT_sUSDe._executeInstantRedemption, the first trade (sUSDe to sDAI via Curve V2) uses `limit: 0`, relying on the second leg of the trade to enforce slippage. If the second leg fails, the first leg may execute at an unfavorable rate with no protection.\",\n    \"file\": \"src/staking/PendlePT_sUSDe.sol\",\n    \"lines\": \"38-45\",\n    \"recommendation\": \"Add proper slippage protection for both legs of the trade. Consider calculating a minimum output for the sUSDe->sDAI swap.\"\n  },\n  {\n    \"id\": \"F-030\",\n    \"title\": \"Chain ID Check Only on Mainnet Deployment\",\n    \"severity\": \"medium\",\n    \"confidence\": \"high\",\n    \"category\": \"deployment\",\n    \"description\": \"StakingStrategy constructor checks `block.chainid == CHAIN_ID_MAINNET` to restrict deployment to mainnet. This means if the contract is accidentally deployed on testnet or another mainnet fork, it will function but with potentially dangerous misconfigurations (wrong addresses in Constants.sol).\",\n    \"file\": \"src/staking/StakingStrategy.sol\",\n    \"lines\": \"14-16\",\n    \"recommendation\": \"Consider making this check more explicit or adding a migration path for testnet deployments with appropriate safeguards.\"\n  },\n  {\n    \"id\": \"F-031\",\n    \"title\": \"Unchecked External Call Return Values\",\n    \"severity\": \"medium\",\n    \"confidence\": \"medium\",\n    \"category\": \"unhandled-return-values\",\n    \"description\": \"Several functions call external contracts without properly checking return values. For example, in CurveConvexLib._stakeLpTokens and _unstakeLpTokens, the Convex calls return bool success but use require(success) which is good, but the Curve gauge deposits/withdrawals don't have explicit return checks.\",\n    \"file\": \"src/single-sided-lp/CurveConvex2Token.sol\",\n    \"lines\": \"218-236\",\n    \"recommendation\": \"Standardize return value checking across all external calls. Consider using a library that wraps these calls with consistent error handling.\"\n  },\n  {\n    \"id\": \"F-032\",\n    \"title\": \"TimelockUpgradeableProxy Whitelist Bypass During Pause\",\n    \"severity\": \"medium\",\n    \"confidence\": \"medium\",\n    \"category\": \"access-control\",\n    \"description\": \"The TimelockUpgradeableProxy allows whitelisting selectors that can be called when paused. If an attacker gains access to the pauseAdmin role, they could whitelist critical functions (like executeUpgrade) and perform malicious upgrades while the proxy appears paused.\",\n    \"file\": \"src/proxy/TimelockUpgradeableProxy.sol\",\n    \"lines\": \"82-88\",\n    \"recommendation\": \"Consider limiting which selectors can be whitelisted, or require multiple approvals for whitelist changes during paused state.\"\n  },\n  {\n    \"id\": \"F-033\",\n    \"title\": \"Share Calculation Assumes Constant Exchange Rate\",\n    \"severity\": \"medium\",\n    \"confidence\": \"high\",\n    \"category\": \"precision-loss\",\n    \"description\": \"In _mintSharesGivenAssets, the share calculation uses effectiveSupply before minting but the yield tokens have already been minted. If the yield token to asset exchange rate changes between _mintYieldTokens and the share calculation (due to external trades), the share calculation will be inaccurate.\",\n    \"file\": \"src/AbstractYieldStrategy.sol\",\n    \"lines\": \"282-296\",\n    \"recommendation\": \"Snapshot the yield token balance immediately after minting and before calculating shares. Ensure no external calls happen between minting and share calculation.\"\n  },\n  {\n    \"id\": \"F-034\",\n    \"title\": \"No Maximum on Fee Rate Input\",\n    \"severity\": \"medium\",\n    \"confidence\": \"medium\",\n    \"category\": \"validation\",\n    \"description\": \"The feeRate parameter in AbstractYieldStrategy constructor has no upper bound check. While DEFAULT_PRECISION suggests 100%, a misconfigured deployment could set an impossibly high fee rate that effectively drains user funds through accrued fees.\",\n    \"file\": \"src/AbstractYieldStrategy.sol\",\n    \"lines\": \"49-56\",\n    \"recommendation\": \"Add a require statement limiting feeRate to a reasonable maximum (e.g., 50% = 0.5 * DEFAULT_PRECISION).\"\n  },\n  {\n    \"id\": \"F-035\",\n    \"title\": \"Insufficient Validation of DexId in Trade Execution\",\n    \"severity\": \"medium\",\n    \"confidence\": \"medium\",\n    \"category\": \"validation\",\n    \"description\": \"The dexId parameter in _executeTrade is passed directly to TRADING_MODULE.executeTrade without validation. If an invalid dexId is provided, the trade could fail unexpectedly or route to an unintended DEX.\",\n    \"file\": \"src/AbstractYieldStrategy.sol\",\n    \"lines\": \"260-276\",\n    \"recommendation\": \"Add validation that dexId is within acceptable bounds or that the corresponding DEX is authorized for this vault.\"\n  },\n  {\n    \"id\": \"F-036\",\n    \"title\": \"Migrate From Zero Address Not Validated\",\n    \"severity\": \"medium\",\n    \"confidence\": \"medium\",\n    \"category\": \"validation\",\n    \"description\": \"In AbstractLendingRouter._enterOrMigrate, when migrateFrom is address(0), the code proceeds to call IYieldStrategy.vault.mintShares. There's no explicit check that migrateFrom is a valid lending router when it's not address(0), only that it 'isLendingRouter'.\",\n    \"file\": \"src/routers/AbstractLendingRouter.sol\",\n    \"lines\": \"152-165\",\n    \"recommendation\": \"Add explicit validation for the migrateFrom address and ensure proper cleanup of the old position.\"\n  },\n  {\n    \"id\": \"F-037\",\n    \"title\": \"No Bounds Check on Array Indices in getWithdrawRequestValue\",\n    \"severity\": \"medium\",\n    \"confidence\": \"medium\",\n    \"category\": \"array-access\",\n    \"description\": \"In AbstractSingleSidedLP.getWithdrawRequestValue (via BaseLPLib), the function iterates through all tokens and calls getWithdrawRequestValue on each manager. If any of the withdraw request managers return corrupted data or if there's a mismatch between TOKENS() and registered managers, the calculation could be incorrect.\",\n    \"file\": \"src/single-sided-lp/AbstractSingleSidedLP.sol\",\n    \"lines\": \"304-316\",\n    \"recommendation\": \"Add validation that getWithdrawRequestValue returns consistent data. Consider adding bounds checks on array operations.\"\n  },\n  {\n    \"id\": \"F-038\",\n    \"title\": \"Curve V2 remove_liquidity Doesn't Return Values\",\n    \"severity\": \"medium\",\n    \"confidence\": \"high\",\n    \"category\": \"external-calls\",\n    \"description\": \"In CurveConvexLib._exitPool, for Curve V2, the function measures balances before and after to calculate exit amounts. This approach assumes no other transfers happen during the call, which may not hold true in complex scenarios.\",\n    \"file\": \"src/single-sided-lp/CurveConvex2Token.sol\",\n    \"lines\": \"196-206\",\n    \"recommendation\": \"Consider adding additional safety checks or using a different exit method if available. Document this limitation clearly.\"\n  }\n]\n```\n\n## Low Issues\n\n```json\n[\n  {\n    \"id\": \"F-039\",\n    \"title\": \"Unused Variable in _burnShares\",\n    \"severity\": \"low\",\n    \"confidence\": \"high\",\n    \"category\": \"audit\",\n    \"description\": \"The sharesHeld parameter in _burnShares is marked with a comment indicating it's unused. While this isn't a security issue, it suggests the interface may have changed.\",\n    \"file\": \"src/AbstractYieldStrategy.sol\",\n    \"lines\": \"299-303\",\n    \"recommendation\": \"Either remove the parameter or document why it's kept in the interface.\"\n  },\n  {\n    \"id\": \"F-040\",\n    \"title\": \"Magic Number in Price Calculation\",\n    \"severity\": \"low\",\n    \"confidence\": \"high\",\n    \"category\": \"code-quality\",\n    \"description\": \"The expression `10 ** (36 - 24)` in price() calculations uses magic numbers. While the calculation appears correct (36 - 24 = 12), it's not immediately clear why these specific values are used.\",\n    \"file\": \"src/AbstractYieldStrategy.sol\",\n    \"lines\": \"83-85, 109-111\",\n    \"recommendation\": \"Define named constants for these precision adjustments to improve readability.\"\n  },\n  {\n    \"id\": \"F-041\",\n    \"title\": \"Inconsistent Error Handling Patterns\",\n    \"severity\": \"low\",\n    \"confidence\": \"medium\",\n    \"category\": \"code-quality\",\n    \"description\": \"Some places use custom error types (revert CustomError()), while others use require() with string messages. This inconsistency makes the codebase harder to audit.\",\n    \"file\": \"Multiple files\",\n    \"lines\": \"Various\",\n    \"recommendation\": \"Standardize on custom errors throughout the codebase for consistency.\"\n  },\n  {\n    \"id\": \"F-042\",\n    \"title\": \"No Event for Emergency Token Rescue\",\n    \"severity\": \"low\",\n    \"confidence\": \"medium\",\n    \"category\": \"audit\",\n    \"description\": \"The rescueTokens function in ClonedCooldownHolder allows the manager to recover any tokens. While this is intended functionality, there's no event emitted to track these recoveries.\",\n    \"file\": \"src/withdraws/ClonedCooldownHolder.sol\",\n    \"lines\": \"18-20\",\n    \"recommendation\": \"Add an event RescueTokens(address indexed token, address indexed receiver, uint256 amount) to enable monitoring of emergency recoveries.\"\n  },\n  {\n    \"id\": \"F-043\",\n    \"title\": \"Missing Zero Address Check in PendlePT Oracle\",\n    \"severity\": \"low\",\n    \"confidence\": \"low\",\n    \"category\": \"validation\",\n    \"description\": \"The baseToUSDOracle in PendlePTOracle is immutable and stored without validation. While the Chainlink latestRoundData check handles some errors, if the oracle is address(0), the call would fail.\",\n    \"file\": \"src/oracles/PendlePTOracle.sol\",\n    \"lines\": \"27-36\",\n    \"recommendation\": \"Add a require statement in the constructor to ensure baseToUSDOracle != address(0).\"\n  },\n  {\n    \"id\": \"F-044\",\n    \"title\": \"Potential Divergence in PendlePT Oracle Decimals Handling\",\n    \"severity\": \"low\",\n    \"confidence\": \"low\",\n    \"category\": \"precision-loss\",\n    \"description\": \"The constructor checks _baseDecimals <= 18 and _ptDecimals <= 18, but the actual calculation in _calculateBaseToQuote doesn't account for cases where decimals are less than 18, potentially causing precision loss.\",\n    \"file\": \"src/oracles/PendlePTOracle.sol\",\n    \"lines\": \"60-72\",\n    \"recommendation\": \"Add proper scaling for tokens with less than 18 decimals in the _calculateBaseToQuote function.\"\n  },\n  {\n    \"id\": \"F-045\",\n    \"title\": \"GenericERC20WithdrawRequestManager Returns Unchecked Token Amount\",\n    \"severity\": \"low\",\n    \"confidence\": \"medium\",\n    \"category\": \"state-consistency\",\n    \"description\": \"In GenericERC20WithdrawRequestManager._finalizeWithdrawImpl, the tokensToWithdraw is retrieved from storage and immediately returned as tokensClaimed without validation. If the actual token balance is less than the stored amount, the contract could return more tokens than it holds.\",\n    \"file\": \"src/withdraws/GenericERC20.sol\",\n    \"lines\": \"35-42\",\n    \"recommendation\": \"Add a check that the contract holds sufficient tokens before returning tokensClaimed, or adjust based on actual balance.\"\n  },\n  {\n    \"id\": \"F-046\",\n    \"title\": \"No Pause on Emergency Claims\",\n    \"severity\": \"low\",\n    \"confidence\": \"medium\",\n    \"category\": \"access-control\",\n    \"description\": \"The claimAccountRewards function in RewardManagerMixin doesn't go through the lending router and may not be pausable via the TimelockUpgradeableProxy. This could allow claims even when the system is paused.\",\n    \"file\": \"src/rewards/RewardManagerMixin.sol\",\n    \"lines\": \"82-99\",\n    \"recommendation\": \"Ensure claimAccountRewards can be paused or that it respects the system's paused state.\"\n  },\n  {\n    \"id\": \"F-047\",\n    \"title\": \"No Maximum on Reward Emission Rate\",\n    \"severity\": \"low\",\n    \"confidence\": \"medium\",\n    \"category\": \"validation\",\n    \"description\": \"In AbstractRewardManager.updateRewardToken, the emissionRatePerYear parameter has no upper bound. An upgraded implementation could set an extremely high emission rate, rapidly diluting existing holders.\",\n    \"file\": \"src/rewards/AbstractRewardManager.sol\",\n    \"lines\": \"66-103\",\n    \"recommendation\": \"Consider adding a maximum emission rate limit that cannot be exceeded without a full governance vote.\"\n  },\n  {\n    \"id\": \"F-048\",\n    \"title\": \"Unchecked Return Value from Convex Operations\",\n    \"severity\": \"low\",\n    \"confidence\": \"medium\",\n    \"category\": \"unhandled-return-values\",\n    \"description\": \"In CurveConvexLib, the Convex booster deposit returns a bool success which is checked with require(), but the Curve gauge deposit doesn't return a value. If the gauge deposit fails silently, tokens could be lost.\",\n    \"file\": \"src/single-sided-lp/CurveConvex2Token.sol\",\n    \"lines\": \"220-227\",\n    \"recommendation\": \"Verify Curve gauge deposit behavior and add appropriate error handling if it can fail silently.\"\n  },\n  {\n    \"id\": \"F-049\",\n    \"title\": \"Unsafe ERC20 Transfer in reward Claim\",\n    \"severity\": \"low\",\n    \"confidence\": \"high\",\n    \"category\": \"unhandled-return-values\",\n    \"description\": \"In AbstractRewardManager._claimRewardToken, the transfer uses try/catch but doesn't properly handle the case where transfer returns false. The emit VaultRewardTransfer(rewardToken, account, 0) hides the failure.\",\n    \"file\": \"src/rewards/AbstractRewardManager.sol\",\n    \"lines\": \"167-184\",\n    \"recommendation\": \"Consider reverting on failed transfers or implementing a claiming mechanism where users must actively claim failed rewards.\"\n  },\n  {\n    \"id\": \"F-050\",\n    \"title\": \"No Expiry Validation on Trade Deadlines\",\n    \"severity\": \"low\",\n    \"confidence\": \"low\",\n    \"category\": \"validation\",\n    \"description\": \"Trade execution uses `block.timestamp` as deadline, which means trades never expire. This could lead to trades executing at unfavorable rates if the transaction sits in the mempool for a long time.\",\n    \"file\": \"src/AbstractYieldStrategy.sol\",\n    \"lines\": \"264-265\",\n    \"recommendation\": \"Consider using a configurable deadline or minimum deadline to protect against long mempool waits.\"\n  }\n]\n```\n\n## Informational Issues\n\n```json\n[\n  {\n    \"id\": \"F-051\",\n    \"title\": \"Duplicate Import Statement\",\n    \"severity\": \"informational\",\n    \"confidence\": \"high\",\n    \"category\": \"code-quality\",\n    \"description\": \"The file AbstractYieldStrategy.sol imports ADDRESS_REGISTRY twice - once in the main import statement and once separately. While this doesn't cause issues, it suggests copy-paste errors.\",\n    \"file\": \"src/AbstractYieldStrategy.sol\",\n    \"lines\": \"1-15\",\n    \"recommendation\": \"Remove the duplicate import statement.\"\n  },\n  {\n    \"id\": \"F-052\",\n    \"title\": \"Incomplete NatSpec Documentation\",\n    \"severity\": \"informational\",\n    \"confidence\": \"medium\",\n    \"category\": \"documentation\",\n    \"description\": \"Several functions have incomplete or missing NatSpec documentation. For example, virtual functions should document their override requirements.\",\n    \"file\": \"Multiple files\",\n    \"lines\": \"Various\",\n    \"recommendation\": \"Add complete NatSpec documentation for all public and external functions, including parameter descriptions and return value documentation.\"\n  },\n  {\n    \"id\": \"F-053\",\n    \"title\": \"Contract Size May Exceed Limit\",\n    \"severity\": \"informational\",\n    \"confidence\": \"medium\",\n    \"category\": \"deployment\",\n    \"description\": \"With multiple inheritance chains and complex functionality, some contracts may approach the EIP-170 contract size limit of 24KB. This is especially concerning for CurveConvex2Token which inherits from multiple abstract contracts.\",\n    \"file\": \"src/single-sided-lp/CurveConvex2Token.sol\",\n    \"lines\": \"1-100\",\n    \"recommendation\": \"Monitor contract sizes during development and consider splitting large contracts into smaller, modular components.\"\n  },\n  {\n    \"id\": \"F-054\",\n    \"title\": \"No Migration Path Documented\",\n    \"severity\": \"informational\",\n    \"confidence\": \"medium\",\n    \"category\": \"documentation\",\n    \"description\": \"While there is a migratePosition function, there's no documented procedure for how to handle failed migrations or how to recover if a migration is interrupted.\",\n    \"file\": \"src/routers/AbstractLendingRouter.sol\",\n    \"lines\": \"59-65\",\n    \"recommendation\": \"Document the complete migration procedure including failure modes and recovery options.\"\n  },\n  {\n    \"id\": \"F-055\",\n    \"title\": \"Transient Storage Slot Collision Potential\",\n    \"severity\": \"informational\",\n    \"confidence\": \"low\",\n    \"category\": \"upgradeability\",\n    \"description\": \"The contract uses custom storage slots for transient variables. While this is intentional for EIP-1153 compatibility, if any future upgrade adds storage at conflicting slots, data corruption could occur silently.\",\n    \"file\": \"src/AbstractYieldStrategy.sol\",\n    \"lines\": \"36-47\",\n    \"recommendation\": \"Document all custom storage slot assignments and consider using a structured approach like Nick Randall's storage pattern for upgrade safety.\"\n  },\n  {\n    \"id\": \"F-056\",\n    \"title\": \"No Test Coverage Indication\",\n    \"severity\": \"informational\",\n    \"confidence\": \"low\",\n    \"category\": \"audit\",\n    \"description\": \"The code review cannot confirm whether comprehensive test coverage exists for all the identified vulnerabilities and edge cases. This audit should be supplemented with coverage analysis from test runs.\",\n    \"file\": \"Multiple files\",\n    \"lines\": \"N/A\",\n    \"recommendation\": \"Ensure comprehensive test coverage including unit tests, integration tests, and invariant tests covering all identified security concerns.\"\n  }\n]\n```\n\n## Summary\n\nThe codebase contains several categories of high-severity issues that should be addressed before production deployment:\n\n1. **Delegatecall vulnerabilities (F-001, F-005, F-009)**: Multiple delegatecall patterns to untrusted code are present and represent critical attack vectors.\n\n2. **Oracle manipulation risks (F-003, F-013, F-014)**: LP oracles rely on spot prices that can be manipulated via flash loans.\n\n3. **Reentrancy vulnerabilities (F-010, F-011)**: AbstractWithdrawRequestManager lacks reentrancy protection despite multiple external calls.\n\n4. **Access control issues (F-002, F-004, F-019)**: Reward claims and Morpho callbacks have insufficient access control.\n\n5. **Economic/exploit risks (F-006, F-008, F-012, F-020, F-022)**: Various economic vectors for fund loss or manipulation.\n\n6. **Integer overflow/underflow (F-008, F-015, F-017)**: Unsafe type conversions and calculations without overflow protection.\n\nThe protocol has a sophisticated architecture with multiple layers of abstraction. However, the extensive use of delegatecall, complex inheritance chains, and integration with multiple external protocols (Curve, Convex, Morpho, Pendle) creates a large attack surface that requires careful security considerations."
+}

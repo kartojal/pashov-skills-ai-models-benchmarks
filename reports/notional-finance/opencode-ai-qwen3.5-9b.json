@@ -1,0 +1,261 @@
+{
+  "metadata": {
+    "model": "qwen/qwen3.5-9b",
+    "harness": "opencode",
+    "target": "notional-finance",
+    "timestamp": "2026-03-23T18:43:28.404091+00:00",
+    "duration_seconds": 835,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 15,
+    "critical": 0,
+    "high": 3,
+    "medium": 7,
+    "low": 4,
+    "informational": 1
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Potential Underflow in effectiveSupply Calculation",
+      "severity": "high",
+      "confidence": "high",
+      "category": "logic-error",
+      "description": "In AbstractYieldStrategy.sol, the effectiveSupply() function calculates (totalSupply() - s_escrowedShares + VIRTUAL_SHARES). If s_escrowedShares exceeds totalSupply(), this could underflow, causing incorrect share calculations and potential fund loss.",
+      "location": {
+        "file": "AbstractYieldStrategy.sol",
+        "lines": "237-239"
+      },
+      "recommendation": "Add a check to ensure s_escrowedShares does not exceed totalSupply() before performing the subtraction. Consider using uint256 with explicit overflow checks or using SafeMath library.",
+      "agents_reporting": [
+        "opencode-ai"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "Taylor Approximation Overflow in Fee Calculation",
+      "severity": "high",
+      "confidence": "high",
+      "category": "integer-overflow",
+      "description": "In AbstractYieldStrategy.sol, _calculateAdditionalFeesInYieldToken() uses Taylor approximation (1 + x + x^2/2! + x^3/3!) which can overflow if x becomes large. The x value is calculated as (feeRate * timeSinceLastFeeAccrual) / YEAR, which could grow unbounded over time.",
+      "location": {
+        "file": "AbstractYieldStrategy.sol",
+        "lines": "253-263"
+      },
+      "recommendation": "Add overflow checks before the Taylor approximation calculation. Consider using a bounded time window or capping the fee calculation to prevent overflow.",
+      "agents_reporting": [
+        "opencode-ai"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "Oracle Manipulation in Price Conversion",
+      "severity": "high",
+      "confidence": "high",
+      "category": "oracle-manipulation",
+      "description": "In AbstractYieldStrategy.sol, convertYieldTokenToAsset() calls TRADING_MODULE.getOraclePrice() without any validation or deviation checks. An attacker could manipulate oracle prices to affect yield token valuations.",
+      "location": {
+        "file": "AbstractYieldStrategy.sol",
+        "lines": "169-172"
+      },
+      "recommendation": "Implement oracle deviation checks similar to AbstractLPOracle.sol. Add multiple oracle sources and require consensus before accepting price data.",
+      "agents_reporting": [
+        "opencode-ai"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "Delegatecall Risk in Trade Execution",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "delegatecall-risk",
+      "description": "In AbstractYieldStrategy.sol, _executeTrade() uses delegatecall to TRADING_MODULE implementation. If the implementation contract is compromised or malicious, it could access the vault's storage and state.",
+      "location": {
+        "file": "AbstractYieldStrategy.sol",
+        "lines": "358-370"
+      },
+      "recommendation": "Use staticcall instead of delegatecall if possible. Implement strict access controls on the trading module. Consider using a proxy pattern with immutable implementation addresses.",
+      "agents_reporting": [
+        "opencode-ai"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "Front-running Vulnerability in Trade Execution",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "front-running",
+      "description": "In AbstractSingleSidedLP.sol, _executeDepositTrades() and _executeRedemptionTrades() execute trades with block.timestamp as deadline. This allows MEV bots to front-run vault trades, potentially causing slippage and fund loss.",
+      "location": {
+        "file": "AbstractSingleSidedLP.sol",
+        "lines": "226-250, 256-280"
+      },
+      "recommendation": "Implement TWAP (Time-Weighted Average Price) or use limit orders with longer deadlines. Consider using private transaction pools or batch execution to reduce front-running risk.",
+      "agents_reporting": [
+        "opencode-ai"
+      ]
+    },
+    {
+      "id": "F-006",
+      "title": "Oracle Manipulation in Withdraw Request Valuation",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "oracle-manipulation",
+      "description": "In AbstractWithdrawRequestManager.sol, getWithdrawRequestValue() uses TRADING_MODULE.getOraclePrice() to value withdraw requests. This allows oracle manipulation to affect liquidation values and withdraw request valuations.",
+      "location": {
+        "file": "AbstractWithdrawRequestManager.sol",
+        "lines": "367-393"
+      },
+      "recommendation": "Implement multiple oracle sources with deviation checks. Consider using TWAP oracles for more stable price feeds. Add minimum/maximum price bounds.",
+      "agents_reporting": [
+        "opencode-ai"
+      ]
+    },
+    {
+      "id": "F-007",
+      "title": "Revert in onMorphoRepay Could Cause Fund Loss",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "logic-error",
+      "description": "In MorphoLendingRouter.sol, onMorphoRepay() reverts if assetsWithdrawn < assetToRepay after already redeeming yield tokens. This could leave funds stuck in the contract and cause partial loss.",
+      "location": {
+        "file": "MorphoLendingRouter.sol",
+        "lines": "247-263"
+      },
+      "recommendation": "Move the check before redeeming yield tokens. Consider implementing a refund mechanism for partial repayments. Add a minimum profit threshold before allowing the transaction to complete.",
+      "agents_reporting": [
+        "opencode-ai"
+      ]
+    },
+    {
+      "id": "F-008",
+      "title": "Reentrancy in checkReentrancyContext",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "reentrancy",
+      "description": "In CurveConvex2Token.sol, checkReentrancyContext() calls Curve pool remove_liquidity methods which could be reentrant. While the function is called from nonReentrant contexts, the pattern is inconsistent.",
+      "location": {
+        "file": "CurveConvex2Token.sol",
+        "lines": "127-143"
+      },
+      "recommendation": "Ensure all external calls to Curve pools are protected with ReentrancyGuardTransient. Consider using the Curve pool's built-in reentrancy protection mechanisms.",
+      "agents_reporting": [
+        "opencode-ai"
+      ]
+    },
+    {
+      "id": "F-009",
+      "title": "Centralization Risk in Lending Router Position Entry",
+      "severity": "low",
+      "confidence": "high",
+      "category": "centralization-risk",
+      "description": "In AddressRegistry.sol, setPosition() allows any whitelisted lending router to enter positions on any vault, including malicious vaults. This centralizes control and could be exploited.",
+      "location": {
+        "file": "AddressRegistry.sol",
+        "lines": "143-157"
+      },
+      "recommendation": "Implement additional checks to validate vault legitimacy before allowing position entry. Consider requiring vault whitelisting at the protocol level rather than per-lending-router.",
+      "agents_reporting": [
+        "opencode-ai"
+      ]
+    },
+    {
+      "id": "F-010",
+      "title": "Timestamp Dependence in Fee Accrual",
+      "severity": "low",
+      "confidence": "medium",
+      "category": "timestamp-dependence",
+      "description": "In AbstractYieldStrategy.sol, _accrueFees() uses block.timestamp for fee calculations. This creates timestamp dependence that could be exploited by miners to manipulate fee accrual timing.",
+      "location": {
+        "file": "AbstractYieldStrategy.sol",
+        "lines": "266-271"
+      },
+      "recommendation": "Use block.timestamp with a minimum time delta check. Consider using TWAP oracles for more stable time-based calculations. Add a minimum time between fee accruals.",
+      "agents_reporting": [
+        "opencode-ai"
+      ]
+    },
+    {
+      "id": "F-011",
+      "title": "Missing Slippage Protection in Instant Redemption",
+      "severity": "low",
+      "confidence": "high",
+      "category": "slippage-protection",
+      "description": "In PendlePT_sUSDe.sol, the first leg of the sDAI trade has limit set to 0, relying on the second leg for slippage protection. This creates a window for price manipulation between trades.",
+      "location": {
+        "file": "PendlePT_sUSDe.sol",
+        "lines": "113-127"
+      },
+      "recommendation": "Set appropriate slippage limits on all trade legs. Consider executing trades atomically or using a single multi-hop trade to reduce manipulation risk.",
+      "agents_reporting": [
+        "opencode-ai"
+      ]
+    },
+    {
+      "id": "F-012",
+      "title": "Unchecked External Call Return Data",
+      "severity": "low",
+      "confidence": "medium",
+      "category": "unchecked-external-call",
+      "description": "In AbstractYieldStrategy.sol, _delegateCall() uses assembly to copy returndata but doesn't validate the return data format before use. Malicious implementations could return invalid data.",
+      "location": {
+        "file": "AbstractYieldStrategy.sol",
+        "lines": "372-380"
+      },
+      "recommendation": "Add validation checks for return data format and length. Use abi.decode with proper error handling. Consider using SafeERC20 patterns for external calls.",
+      "agents_reporting": [
+        "opencode-ai"
+      ]
+    },
+    {
+      "id": "F-013",
+      "title": "Upgrade Admin Key Concentration",
+      "severity": "informational",
+      "confidence": "high",
+      "category": "governance-risk",
+      "description": "In AddressRegistry.sol, upgradeAdmin has extensive powers including pausing contracts, transferring admin roles, and setting fee receivers. Single key concentration creates centralization risk.",
+      "location": {
+        "file": "AddressRegistry.sol",
+        "lines": "33-42"
+      },
+      "recommendation": "Implement multi-signature governance for upgrade admin. Consider using a timelock for critical admin actions. Add emergency pause mechanisms with separate controls.",
+      "agents_reporting": [
+        "opencode-ai"
+      ]
+    },
+    {
+      "id": "F-014",
+      "title": "Token Handling Edge Effects Not Checked",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "token-handling",
+      "description": "In AbstractYieldStrategy.sol, _transferYieldTokenToOwner() uses safeTransfer without checking for fee-on-transfer or rebasing tokens. This could cause unexpected token loss.",
+      "location": {
+        "file": "AbstractYieldStrategy.sol",
+        "lines": "396-398"
+      },
+      "recommendation": "Add checks for fee-on-transfer tokens. Consider using IERC20Metadata to verify token compliance. Implement fallback mechanisms for non-standard tokens.",
+      "agents_reporting": [
+        "opencode-ai"
+      ]
+    },
+    {
+      "id": "F-015",
+      "title": "Uninitialized Storage Variable Risk",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "uninitialized-storage",
+      "description": "In AbstractYieldStrategy.sol, s_lastFeeAccrualTime is initialized in _initialize() but if initialization fails or is skipped, the variable remains 0, causing incorrect fee calculations.",
+      "location": {
+        "file": "AbstractYieldStrategy.sol",
+        "lines": "61-62"
+      },
+      "recommendation": "Add initialization checks in constructor or require proper initialization before use. Consider using a separate initialization flag to track contract state.",
+      "agents_reporting": [
+        "opencode-ai"
+      ]
+    }
+  ],
+  "raw_output": "{\n  \"findings\": [\n    {\n      \"title\": \"Potential Underflow in effectiveSupply Calculation\",\n      \"severity\": \"high\",\n      \"confidence\": \"high\",\n      \"category\": \"logic-error\",\n      \"description\": \"In AbstractYieldStrategy.sol, the effectiveSupply() function calculates (totalSupply() - s_escrowedShares + VIRTUAL_SHARES). If s_escrowedShares exceeds totalSupply(), this could underflow, causing incorrect share calculations and potential fund loss.\",\n      \"file\": \"AbstractYieldStrategy.sol\",\n      \"lines\": \"237-239\",\n      \"recommendation\": \"Add a check to ensure s_escrowedShares does not exceed totalSupply() before performing the subtraction. Consider using uint256 with explicit overflow checks or using SafeMath library.\"\n    },\n    {\n      \"title\": \"Taylor Approximation Overflow in Fee Calculation\",\n      \"severity\": \"high\",\n      \"confidence\": \"high\",\n      \"category\": \"integer-overflow\",\n      \"description\": \"In AbstractYieldStrategy.sol, _calculateAdditionalFeesInYieldToken() uses Taylor approximation (1 + x + x^2/2! + x^3/3!) which can overflow if x becomes large. The x value is calculated as (feeRate * timeSinceLastFeeAccrual) / YEAR, which could grow unbounded over time.\",\n      \"file\": \"AbstractYieldStrategy.sol\",\n      \"lines\": \"253-263\",\n      \"recommendation\": \"Add overflow checks before the Taylor approximation calculation. Consider using a bounded time window or capping the fee calculation to prevent overflow.\"\n    },\n    {\n      \"title\": \"Oracle Manipulation in Price Conversion\",\n      \"severity\": \"high\",\n      \"confidence\": \"high\",\n      \"category\": \"oracle-manipulation\",\n      \"description\": \"In AbstractYieldStrategy.sol, convertYieldTokenToAsset() calls TRADING_MODULE.getOraclePrice() without any validation or deviation checks. An attacker could manipulate oracle prices to affect yield token valuations.\",\n      \"file\": \"AbstractYieldStrategy.sol\",\n      \"lines\": \"169-172\",\n      \"recommendation\": \"Implement oracle deviation checks similar to AbstractLPOracle.sol. Add multiple oracle sources and require consensus before accepting price data.\"\n    },\n    {\n      \"title\": \"Delegatecall Risk in Trade Execution\",\n      \"severity\": \"medium\",\n      \"confidence\": \"high\",\n      \"category\": \"delegatecall-risk\",\n      \"description\": \"In AbstractYieldStrategy.sol, _executeTrade() uses delegatecall to TRADING_MODULE implementation. If the implementation contract is compromised or malicious, it could access the vault's storage and state.\",\n      \"file\": \"AbstractYieldStrategy.sol\",\n      \"lines\": \"358-370\",\n      \"recommendation\": \"Use staticcall instead of delegatecall if possible. Implement strict access controls on the trading module. Consider using a proxy pattern with immutable implementation addresses.\"\n    },\n    {\n      \"title\": \"Front-running Vulnerability in Trade Execution\",\n      \"severity\": \"medium\",\n      \"confidence\": \"medium\",\n      \"category\": \"front-running\",\n      \"description\": \"In AbstractSingleSidedLP.sol, _executeDepositTrades() and _executeRedemptionTrades() execute trades with block.timestamp as deadline. This allows MEV bots to front-run vault trades, potentially causing slippage and fund loss.\",\n      \"file\": \"AbstractSingleSidedLP.sol\",\n      \"lines\": \"226-250, 256-280\",\n      \"recommendation\": \"Implement TWAP (Time-Weighted Average Price) or use limit orders with longer deadlines. Consider using private transaction pools or batch execution to reduce front-running risk.\"\n    },\n    {\n      \"title\": \"Oracle Manipulation in Withdraw Request Valuation\",\n      \"severity\": \"medium\",\n      \"confidence\": \"high\",\n      \"category\": \"oracle-manipulation\",\n      \"description\": \"In AbstractWithdrawRequestManager.sol, getWithdrawRequestValue() uses TRADING_MODULE.getOraclePrice() to value withdraw requests. This allows oracle manipulation to affect liquidation values and withdraw request valuations.\",\n      \"file\": \"AbstractWithdrawRequestManager.sol\",\n      \"lines\": \"367-393\",\n      \"recommendation\": \"Implement multiple oracle sources with deviation checks. Consider using TWAP oracles for more stable price feeds. Add minimum/maximum price bounds.\"\n    },\n    {\n      \"title\": \"Revert in onMorphoRepay Could Cause Fund Loss\",\n      \"severity\": \"medium\",\n      \"confidence\": \"high\",\n      \"category\": \"logic-error\",\n      \"description\": \"In MorphoLendingRouter.sol, onMorphoRepay() reverts if assetsWithdrawn < assetToRepay after already redeeming yield tokens. This could leave funds stuck in the contract and cause partial loss.\",\n      \"file\": \"MorphoLendingRouter.sol\",\n      \"lines\": \"247-263\",\n      \"recommendation\": \"Move the check before redeeming yield tokens. Consider implementing a refund mechanism for partial repayments. Add a minimum profit threshold before allowing the transaction to complete.\"\n    },\n    {\n      \"title\": \"Reentrancy in checkReentrancyContext\",\n      \"severity\": \"medium\",\n      \"confidence\": \"medium\",\n      \"category\": \"reentrancy\",\n      \"description\": \"In CurveConvex2Token.sol, checkReentrancyContext() calls Curve pool remove_liquidity methods which could be reentrant. While the function is called from nonReentrant contexts, the pattern is inconsistent.\",\n      \"file\": \"CurveConvex2Token.sol\",\n      \"lines\": \"127-143\",\n      \"recommendation\": \"Ensure all external calls to Curve pools are protected with ReentrancyGuardTransient. Consider using the Curve pool's built-in reentrancy protection mechanisms.\"\n    },\n    {\n      \"title\": \"Centralization Risk in Lending Router Position Entry\",\n      \"severity\": \"low\",\n      \"confidence\": \"high\",\n      \"category\": \"centralization-risk\",\n      \"description\": \"In AddressRegistry.sol, setPosition() allows any whitelisted lending router to enter positions on any vault, including malicious vaults. This centralizes control and could be exploited.\",\n      \"file\": \"AddressRegistry.sol\",\n      \"lines\": \"143-157\",\n      \"recommendation\": \"Implement additional checks to validate vault legitimacy before allowing position entry. Consider requiring vault whitelisting at the protocol level rather than per-lending-router.\"\n    },\n    {\n      \"title\": \"Timestamp Dependence in Fee Accrual\",\n      \"severity\": \"low\",\n      \"confidence\": \"medium\",\n      \"category\": \"timestamp-dependence\",\n      \"description\": \"In AbstractYieldStrategy.sol, _accrueFees() uses block.timestamp for fee calculations. This creates timestamp dependence that could be exploited by miners to manipulate fee accrual timing.\",\n      \"file\": \"AbstractYieldStrategy.sol\",\n      \"lines\": \"266-271\",\n      \"recommendation\": \"Use block.timestamp with a minimum time delta check. Consider using TWAP oracles for more stable time-based calculations. Add a minimum time between fee accruals.\"\n    },\n    {\n      \"title\": \"Missing Slippage Protection in Instant Redemption\",\n      \"severity\": \"low\",\n      \"confidence\": \"high\",\n      \"category\": \"slippage-protection\",\n      \"description\": \"In PendlePT_sUSDe.sol, the first leg of the sDAI trade has limit set to 0, relying on the second leg for slippage protection. This creates a window for price manipulation between trades.\",\n      \"file\": \"PendlePT_sUSDe.sol\",\n      \"lines\": \"113-127\",\n      \"recommendation\": \"Set appropriate slippage limits on all trade legs. Consider executing trades atomically or using a single multi-hop trade to reduce manipulation risk.\"\n    },\n    {\n      \"title\": \"Unchecked External Call Return Data\",\n      \"severity\": \"low\",\n      \"confidence\": \"medium\",\n      \"category\": \"unchecked-external-call\",\n      \"description\": \"In AbstractYieldStrategy.sol, _delegateCall() uses assembly to copy returndata but doesn't validate the return data format before use. Malicious implementations could return invalid data.\",\n      \"file\": \"AbstractYieldStrategy.sol\",\n      \"lines\": \"372-380\",\n      \"recommendation\": \"Add validation checks for return data format and length. Use abi.decode with proper error handling. Consider using SafeERC20 patterns for external calls.\"\n    },\n    {\n      \"title\": \"Upgrade Admin Key Concentration\",\n      \"severity\": \"informational\",\n      \"confidence\": \"high\",\n      \"category\": \"governance-risk\",\n      \"description\": \"In AddressRegistry.sol, upgradeAdmin has extensive powers including pausing contracts, transferring admin roles, and setting fee receivers. Single key concentration creates centralization risk.\",\n      \"file\": \"AddressRegistry.sol\",\n      \"lines\": \"33-42\",\n      \"recommendation\": \"Implement multi-signature governance for upgrade admin. Consider using a timelock for critical admin actions. Add emergency pause mechanisms with separate controls.\"\n    },\n    {\n      \"title\": \"Token Handling Edge Effects Not Checked\",\n      \"severity\": \"medium\",\n      \"confidence\": \"medium\",\n      \"category\": \"token-handling\",\n      \"description\": \"In AbstractYieldStrategy.sol, _transferYieldTokenToOwner() uses safeTransfer without checking for fee-on-transfer or rebasing tokens. This could cause unexpected token loss.\",\n      \"file\": \"AbstractYieldStrategy.sol\",\n      \"lines\": \"396-398\",\n      \"recommendation\": \"Add checks for fee-on-transfer tokens. Consider using IERC20Metadata to verify token compliance. Implement fallback mechanisms for non-standard tokens.\"\n    },\n    {\n      \"title\": \"Uninitialized Storage Variable Risk\",\n      \"severity\": \"medium\",\n      \"confidence\": \"high\",\n      \"category\": \"uninitialized-storage\",\n      \"description\": \"In AbstractYieldStrategy.sol, s_lastFeeAccrualTime is initialized in _initialize() but if initialization fails or is skipped, the variable remains 0, causing incorrect fee calculations.\",\n      \"file\": \"AbstractYieldStrategy.sol\",\n      \"lines\": \"61-62\",\n      \"recommendation\": \"Add initialization checks in constructor or require proper initialization before use. Consider using a separate initialization flag to track contract state.\"\n    }\n  ]\n}"
+}

@@ -1,0 +1,181 @@
+{
+  "metadata": {
+    "model": "google/gemini-3.1-pro-preview",
+    "harness": "opencode",
+    "target": "notional-finance",
+    "timestamp": "2026-03-23T19:02:52.968079Z",
+    "duration_seconds": 1939,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 10,
+    "critical": 2,
+    "high": 6,
+    "medium": 2,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Incorrect `sharesInEscrow` flag in `_postLiquidation` causes reward debt underflow and permanent DoS",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Logic Error",
+      "description": "In `_postLiquidation`, the `didTokenize` boolean indicates whether the liquidator's received shares were tokenized into a withdraw request (i.e., placed in escrow). However, this same `didTokenize` flag is erroneously passed as the `sharesInEscrow` parameter when updating the rewards for the `liquidateAccount`.\n\nIf `didTokenize` is true, the reward update for `liquidateAccount` will short-circuit (because `sharesInEscrow` is true and `accountSharesAfter > 0`). This leaves the `liquidateAccount`'s `rewardDebt` at its previous, higher value (based on their pre-liquidation balance). When the `liquidateAccount` later attempts to claim rewards, withdraw, or is liquidated again, the reward calculation `((accountSharesBefore * rewardsPerVaultShare) / DEFAULT_PRECISION) - rewardDebt` will underflow and revert. This results in a permanent Denial of Service for the `liquidateAccount`, preventing them from ever exiting their remaining position or being further liquidated.",
+      "location": {
+        "file": "src/rewards/RewardManagerMixin.sol",
+        "lines": "68-74"
+      },
+      "recommendation": "Pass `_isWithdrawRequestPending(liquidateAccount)` instead of `didTokenize` for the `liquidateAccount`'s reward update.",
+      "agents_reporting": [
+        "opencode-gemini-3.1-pro"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "`executeUpgrade` does not clear upgrade state, allowing repeated executions and timelock bypass",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Access Control",
+      "description": "In `TimelockUpgradeableProxy`, the `executeUpgrade` function upgrades the proxy to `newImplementation` and executes a delegatecall with the provided `data`. However, it does not reset `newImplementation` or `upgradeValidAt` after execution.\n\nThis allows the `upgradeAdmin` to call `executeUpgrade` multiple times after the initial 7-day timelock has passed. Since `executeUpgrade` forwards arbitrary `data` to the implementation via `delegatecall`, the admin can use this to execute any function on the implementation at any time without waiting for a new timelock. This breaks the 7-day timelock security guarantee, acting as a permanent backdoor for the admin to bypass the timelock for subsequent calls.",
+      "location": {
+        "file": "src/proxy/TimelockUpgradeableProxy.sol",
+        "lines": "45-50"
+      },
+      "recommendation": "Reset `newImplementation` to `address(0)` and `upgradeValidAt` to `0` at the end of the `executeUpgrade` function.",
+      "agents_reporting": [
+        "opencode-gemini-3.1-pro"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "Vault bricking risk if yield token balance decreases below accrued fees",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Logic Error",
+      "description": "The `convertSharesToYieldToken` and `convertYieldTokenToShares` functions subtract `feesAccrued()` from `_yieldTokenBalance()`. The `feesAccrued()` value monotonically increases over time based on the `feeRate`.\n\nIf the underlying yield token experiences a loss (e.g., due to slashing, a negative rebase, or a hack in the underlying protocol), `_yieldTokenBalance()` may drop below `feesAccrued()`. If this happens, the subtraction will underflow, causing all core vault functions (`price`, `mintShares`, `burnShares`, `redeemNative`, `initiateWithdraw`) to revert. This results in a complete lock of user funds, preventing them from exiting the strategy even at a loss.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "65-67"
+      },
+      "recommendation": "Cap the subtracted fees at the current balance to prevent underflow:\n```solidity\nuint256 availableBalance = _yieldTokenBalance();\nuint256 fees = feesAccrued();\nif (fees > availableBalance) fees = availableBalance;\nreturn (shares * (availableBalance - fees + VIRTUAL_YIELD_TOKENS)) / effectiveSupply();\n```",
+      "agents_reporting": [
+        "opencode-gemini-3.1-pro"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "Unauthenticated Morpho Callbacks Allow Complete Theft of User Funds and Router Balances",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Access Control",
+      "description": "The `MorphoLendingRouter` implements Morpho Blue callbacks (`onMorphoFlashLoan`, `onMorphoRepay`, `onMorphoLiquidate`) but fails to verify that these callbacks were actually initiated by the router itself. An attacker can directly call `flashLoan`, `repay`, or `liquidate` on the Morpho contract and pass arbitrary `data` to trigger these callbacks.\n\nIn `onMorphoRepay`, an attacker can pass a victim's address as `sharesOwner` and their own address as `receiver`. The router will withdraw the victim's collateral, burn it for assets, and transfer the assets to the attacker, leading to a complete loss of funds for any user who has authorized the router.\n\nIn `onMorphoFlashLoan`, an attacker can pass a malicious contract as `migrateFrom`. The router will approve this malicious contract to spend its asset balance, allowing the attacker to steal any tokens held by the router.",
+      "location": {
+        "file": "src/routers/MorphoLendingRouter.sol",
+        "lines": "104-121"
+      },
+      "recommendation": "Implement a mechanism to ensure callbacks are only processed when expected. For example, set a state variable before initiating a Morpho action and verify/clear it in the callback, or check that the callback data matches an expected hash.",
+      "agents_reporting": [
+        "opencode-gemini-3.1-pro"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "`forceWithdraw` Allows Liquidators to Specify Arbitrary Slippage and Exchange Data, Leading to Loss of User Funds",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Logic Error",
+      "description": "The `forceWithdraw` function allows anyone to initiate a withdrawal for an account if its health factor is below the threshold. The caller can pass arbitrary `data` which is forwarded to the vault's `initiateWithdraw` function. For single-sided LP vaults, this `data` contains `minAmounts` and `withdrawData` (which includes exchange data for trades).\n\nA malicious liquidator can pass `minAmounts = 0` and malicious exchange data to sandwich the withdrawal or route trades through attacker-controlled pools. Because the liquidator controls the slippage limits and routing data for the user's forced withdrawal, they can steal the user's collateral during the withdrawal process.",
+      "location": {
+        "file": "src/routers/AbstractLendingRouter.sol",
+        "lines": "154-162"
+      },
+      "recommendation": "Do not allow the caller of `forceWithdraw` to specify arbitrary `data`. Instead, the protocol should enforce strict slippage controls (e.g., using an oracle) or require the withdrawal to be purely proportional without any secondary trades.",
+      "agents_reporting": [
+        "opencode-gemini-3.1-pro"
+      ]
+    },
+    {
+      "id": "F-006",
+      "title": "Liquidations Will Always Revert for Curve V2 Pools Due to Insufficient LP Token Balance",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Denial of Service",
+      "description": "In `CurveConvex2Token._checkReentrancyContext`, the vault makes an external call to `CurveConvexLib.checkReentrancyContext()`. For Curve V2 pools, this function attempts to call `remove_liquidity(1, ...)` to check for reentrancy.\n\nHowever, because this is an external call (not a `delegatecall`), the `msg.sender` to the Curve pool is the `CurveConvexLib` contract itself, which holds 0 LP tokens. Consequently, the `remove_liquidity(1, ...)` call will revert due to insufficient balance. Since `_checkReentrancyContext` is called during `_preLiquidation`, this will cause all liquidations for Curve V2 vaults to revert, leading to bad debt.",
+      "location": {
+        "file": "src/single-sided-lp/CurveConvex2Token.sol",
+        "lines": "68-70"
+      },
+      "recommendation": "Execute `checkReentrancyContext` via `_delegateCall` so that it runs in the context of the vault, which holds the LP tokens. Alternatively, mint or transfer 1 wei of LP token to the `CurveConvexLib` contract during deployment.",
+      "agents_reporting": [
+        "opencode-gemini-3.1-pro"
+      ]
+    },
+    {
+      "id": "F-007",
+      "title": "Withdraw Request Flow Reverts for Pools Containing Tokens Without a Withdraw Request Manager",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Logic Error",
+      "description": "In `BaseLPLib`, the functions `initiateWithdraw`, `getWithdrawRequestValue`, and `finalizeAndRedeemWithdrawRequest` iterate over all tokens in the LP pool and attempt to interact with their respective `WithdrawRequestManager`.\n\nHowever, they fail to check if a manager actually exists (`address(manager) != address(0)`) for each token. If the pool contains a liquid token (e.g., WETH) that does not require a withdrawal manager, these functions will attempt to call `address(0)`, causing the entire transaction to revert. This completely breaks the withdrawal and liquidation flows for any LP vault that pairs an illiquid token with a liquid one.",
+      "location": {
+        "file": "src/single-sided-lp/AbstractSingleSidedLP.sol",
+        "lines": "266-281"
+      },
+      "recommendation": "Add checks for `address(manager) == address(0)` in `initiateWithdraw`, `getWithdrawRequestValue`, and `finalizeAndRedeemWithdrawRequest`. For tokens without a manager, the liquid assets should be held in escrow or immediately transferred, and their value should be calculated directly rather than querying a manager.",
+      "agents_reporting": [
+        "opencode-gemini-3.1-pro"
+      ]
+    },
+    {
+      "id": "F-008",
+      "title": "Missing `receive()` function causes ETH transfers to revert",
+      "severity": "high",
+      "confidence": "high",
+      "category": "logic error",
+      "description": "`DineroWithdrawRequestManager` and `EtherFiWithdrawRequestManager` both interact with protocols that send native ETH to the caller. Specifically, `WETH.withdraw(amount)` is called in `_stakeTokens` for both contracts, which unwraps WETH and sends native ETH to `address(this)`. Additionally, `WithdrawRequestNFT.claimWithdraw(requestId)` in `EtherFiWithdrawRequestManager` and `PirexETH.redeemWithUpxEth` in `DineroWithdrawRequestManager` send ETH to the caller during withdrawal finalization. However, neither these contracts nor their base contract `AbstractWithdrawRequestManager` implement a `receive()` or `fallback()` payable function. As a result, any incoming ETH transfer will revert, completely breaking the staking and withdrawal finalization flows for these managers.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "49-53"
+      },
+      "recommendation": "Add a `receive() external payable {}` function to `AbstractWithdrawRequestManager` or to the specific child contracts that require it to accept native ETH.",
+      "agents_reporting": [
+        "opencode-gemini-3.1-pro"
+      ]
+    },
+    {
+      "id": "F-009",
+      "title": "DineroWithdrawRequestManager pools upxETH balances, allowing the first finalizer to steal ETH from others in the same batch",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "logic error",
+      "description": "In `DineroWithdrawRequestManager._finalizeWithdrawImpl`, the contract iterates over the batch IDs associated with a `requestId` and checks the contract's total balance of `upxETH` for each batch using `upxETH.balanceOf(address(this), i)`. It then redeems this entire balance. Because `upxETH` is minted to `address(this)` for all users, if multiple users initiate withdrawals that fall into the same batch ID, their `upxETH` balances are pooled together in the contract. The first user to call `finalizeAndRedeemWithdrawRequest` for that batch will redeem the entire pooled balance, and `tokensClaimed` will include the ETH belonging to all users in that batch. This ETH will be attributed entirely to the first user's `requestId`, leaving subsequent users with 0 tokens claimed and effectively stealing their funds.",
+      "location": {
+        "file": "src/withdraws/Dinero.sol",
+        "lines": "49-62"
+      },
+      "recommendation": "Instead of relying on `upxETH.balanceOf(address(this), i)`, the contract must record the exact amount of `upxETH` minted (or `pxETH` redeemed) for each specific `requestId` during `_initiateWithdrawImpl`. During finalization, it should only redeem that specific recorded amount for the given batch.",
+      "agents_reporting": [
+        "opencode-gemini-3.1-pro"
+      ]
+    },
+    {
+      "id": "F-010",
+      "title": "EthenaCooldownHolder calculates 0 tokens claimed if cooldown duration is 0, locking user funds",
+      "severity": "high",
+      "confidence": "high",
+      "category": "logic error",
+      "description": "In `EthenaCooldownHolder._startCooldown`, if `sUSDe.cooldownDuration() == 0`, the contract immediately redeems `sUSDe` for `USDe`, and the `USDe` is held in the `EthenaCooldownHolder` contract. Later, when `_finalizeCooldown` is called, it calculates `tokensClaimed = balanceAfter - balanceBefore`. Since `userCooldown.cooldownEnd` is 0, `sUSDe.unstake` is not called, meaning `balanceAfter` equals `balanceBefore`. As a result, `tokensClaimed` is calculated as 0, and 0 `USDe` is transferred to the manager. The actual `USDe` redeemed during `_startCooldown` remains permanently stuck in the `EthenaCooldownHolder` contract, and the user receives nothing.",
+      "location": {
+        "file": "src/withdraws/Ethena.sol",
+        "lines": "30-45"
+      },
+      "recommendation": "Change the `tokensClaimed` calculation in `_finalizeCooldown` to simply use the total `USDe` balance of the holder contract, i.e., `tokensClaimed = USDe.balanceOf(address(this));`, since the cloned holder is dedicated to a single withdrawal request and all its `USDe` belongs to that request.",
+      "agents_reporting": [
+        "opencode-gemini-3.1-pro"
+      ]
+    }
+  ],
+  "raw_output": "===FINDING===\nTITLE: Incorrect `sharesInEscrow` flag in `_postLiquidation` causes reward debt underflow and permanent DoS\nSEVERITY: high\nCONFIDENCE: high\nCATEGORY: Logic Error\nFILE: src/rewards/RewardManagerMixin.sol\nLINES: 68-74\nDESCRIPTION: In `_postLiquidation`, the `didTokenize` boolean indicates whether the liquidator's received shares were tokenized into a withdraw request (i.e., placed in escrow). However, this same `didTokenize` flag is erroneously passed as the `sharesInEscrow` parameter when updating the rewards for the `liquidateAccount`. \n\nIf `didTokenize` is true, the reward update for `liquidateAccount` will short-circuit (because `sharesInEscrow` is true and `accountSharesAfter > 0`). This leaves the `liquidateAccount`'s `rewardDebt` at its previous, higher value (based on their pre-liquidation balance). When the `liquidateAccount` later attempts to claim rewards, withdraw, or is liquidated again, the reward calculation `((accountSharesBefore * rewardsPerVaultShare) / DEFAULT_PRECISION) - rewardDebt` will underflow and revert. This results in a permanent Denial of Service for the `liquidateAccount`, preventing them from ever exiting their remaining position or being further liquidated.\nRECOMMENDATION: Pass `_isWithdrawRequestPending(liquidateAccount)` instead of `didTokenize` for the `liquidateAccount`'s reward update.\n===END===\n\n===FINDING===\nTITLE: `executeUpgrade` does not clear upgrade state, allowing repeated executions and timelock bypass\nSEVERITY: medium\nCONFIDENCE: high\nCATEGORY: Access Control\nFILE: src/proxy/TimelockUpgradeableProxy.sol\nLINES: 45-50\nDESCRIPTION: In `TimelockUpgradeableProxy`, the `executeUpgrade` function upgrades the proxy to `newImplementation` and executes a delegatecall with the provided `data`. However, it does not reset `newImplementation` or `upgradeValidAt` after execution. \n\nThis allows the `upgradeAdmin` to call `executeUpgrade` multiple times after the initial 7-day timelock has passed. Since `executeUpgrade` forwards arbitrary `data` to the implementation via `delegatecall`, the admin can use this to execute any function on the implementation at any time without waiting for a new timelock. This breaks the 7-day timelock security guarantee, acting as a permanent backdoor for the admin to bypass the timelock for subsequent calls.\nRECOMMENDATION: Reset `newImplementation` to `address(0)` and `upgradeValidAt` to `0` at the end of the `executeUpgrade` function.\n===END===\n\n===FINDING===\nTITLE: Vault bricking risk if yield token balance decreases below accrued fees\nSEVERITY: medium\nCONFIDENCE: high\nCATEGORY: Logic Error\nFILE: src/AbstractYieldStrategy.sol\nLINES: 65-67\nDESCRIPTION: The `convertSharesToYieldToken` and `convertYieldTokenToShares` functions subtract `feesAccrued()` from `_yieldTokenBalance()`. The `feesAccrued()` value monotonically increases over time based on the `feeRate`. \n\nIf the underlying yield token experiences a loss (e.g., due to slashing, a negative rebase, or a hack in the underlying protocol), `_yieldTokenBalance()` may drop below `feesAccrued()`. If this happens, the subtraction will underflow, causing all core vault functions (`price`, `mintShares`, `burnShares`, `redeemNative`, `initiateWithdraw`) to revert. This results in a complete lock of user funds, preventing them from exiting the strategy even at a loss.\nRECOMMENDATION: Cap the subtracted fees at the current balance to prevent underflow:\n```solidity\nuint256 availableBalance = _yieldTokenBalance();\nuint256 fees = feesAccrued();\nif (fees > availableBalance) fees = availableBalance;\nreturn (shares * (availableBalance - fees + VIRTUAL_YIELD_TOKENS)) / effectiveSupply();\n```\n===END===\n\n===FINDING===\nTITLE: Unauthenticated Morpho Callbacks Allow Complete Theft of User Funds and Router Balances\nSEVERITY: critical\nCONFIDENCE: high\nCATEGORY: Access Control\nFILE: src/routers/MorphoLendingRouter.sol\nLINES: 104-121\nDESCRIPTION: The `MorphoLendingRouter` implements Morpho Blue callbacks (`onMorphoFlashLoan`, `onMorphoRepay`, `onMorphoLiquidate`) but fails to verify that these callbacks were actually initiated by the router itself. An attacker can directly call `flashLoan`, `repay`, or `liquidate` on the Morpho contract and pass arbitrary `data` to trigger these callbacks. \n\nIn `onMorphoRepay`, an attacker can pass a victim's address as `sharesOwner` and their own address as `receiver`. The router will withdraw the victim's collateral, burn it for assets, and transfer the assets to the attacker, leading to a complete loss of funds for any user who has authorized the router.\n\nIn `onMorphoFlashLoan`, an attacker can pass a malicious contract as `migrateFrom`. The router will approve this malicious contract to spend its asset balance, allowing the attacker to steal any tokens held by the router.\nRECOMMENDATION: Implement a mechanism to ensure callbacks are only processed when expected. For example, set a state variable before initiating a Morpho action and verify/clear it in the callback, or check that the callback data matches an expected hash.\n===END===\n\n===FINDING===\nTITLE: `forceWithdraw` Allows Liquidators to Specify Arbitrary Slippage and Exchange Data, Leading to Loss of User Funds\nSEVERITY: high\nCONFIDENCE: high\nCATEGORY: Logic Error\nFILE: src/routers/AbstractLendingRouter.sol\nLINES: 154-162\nDESCRIPTION: The `forceWithdraw` function allows anyone to initiate a withdrawal for an account if its health factor is below the threshold. The caller can pass arbitrary `data` which is forwarded to the vault's `initiateWithdraw` function. For single-sided LP vaults, this `data` contains `minAmounts` and `withdrawData` (which includes exchange data for trades). \n\nA malicious liquidator can pass `minAmounts = 0` and malicious exchange data to sandwich the withdrawal or route trades through attacker-controlled pools. Because the liquidator controls the slippage limits and routing data for the user's forced withdrawal, they can steal the user's collateral during the withdrawal process.\nRECOMMENDATION: Do not allow the caller of `forceWithdraw` to specify arbitrary `data`. Instead, the protocol should enforce strict slippage controls (e.g., using an oracle) or require the withdrawal to be purely proportional without any secondary trades.\n===END===\n\n===FINDING===\nTITLE: Liquidations Will Always Revert for Curve V2 Pools Due to Insufficient LP Token Balance\nSEVERITY: high\nCONFIDENCE: high\nCATEGORY: Denial of Service\nFILE: src/single-sided-lp/CurveConvex2Token.sol\nLINES: 68-70\nDESCRIPTION: In `CurveConvex2Token._checkReentrancyContext`, the vault makes an external call to `CurveConvexLib.checkReentrancyContext()`. For Curve V2 pools, this function attempts to call `remove_liquidity(1, ...)` to check for reentrancy. \n\nHowever, because this is an external call (not a `delegatecall`), the `msg.sender` to the Curve pool is the `CurveConvexLib` contract itself, which holds 0 LP tokens. Consequently, the `remove_liquidity(1, ...)` call will revert due to insufficient balance. Since `_checkReentrancyContext` is called during `_preLiquidation`, this will cause all liquidations for Curve V2 vaults to revert, leading to bad debt.\nRECOMMENDATION: Execute `checkReentrancyContext` via `_delegateCall` so that it runs in the context of the vault, which holds the LP tokens. Alternatively, mint or transfer 1 wei of LP token to the `CurveConvexLib` contract during deployment.\n===END===\n\n===FINDING===\nTITLE: Withdraw Request Flow Reverts for Pools Containing Tokens Without a Withdraw Request Manager\nSEVERITY: high\nCONFIDENCE: high\nCATEGORY: Logic Error\nFILE: src/single-sided-lp/AbstractSingleSidedLP.sol\nLINES: 266-281\nDESCRIPTION: In `BaseLPLib`, the functions `initiateWithdraw`, `getWithdrawRequestValue`, and `finalizeAndRedeemWithdrawRequest` iterate over all tokens in the LP pool and attempt to interact with their respective `WithdrawRequestManager`. \n\nHowever, they fail to check if a manager actually exists (`address(manager) != address(0)`) for each token. If the pool contains a liquid token (e.g., WETH) that does not require a withdrawal manager, these functions will attempt to call `address(0)`, causing the entire transaction to revert. This completely breaks the withdrawal and liquidation flows for any LP vault that pairs an illiquid token with a liquid one.\nRECOMMENDATION: Add checks for `address(manager) == address(0)` in `initiateWithdraw`, `getWithdrawRequestValue`, and `finalizeAndRedeemWithdrawRequest`. For tokens without a manager, the liquid assets should be held in escrow or immediately transferred, and their value should be calculated directly rather than querying a manager.\n===END===\n\n===FINDING===\nTITLE: Missing `receive()` function causes ETH transfers to revert\nSEVERITY: high\nCONFIDENCE: high\nCATEGORY: logic error\nFILE: src/withdraws/AbstractWithdrawRequestManager.sol\nLINES: 49-53\nDESCRIPTION: `DineroWithdrawRequestManager` and `EtherFiWithdrawRequestManager` both interact with protocols that send native ETH to the caller. Specifically, `WETH.withdraw(amount)` is called in `_stakeTokens` for both contracts, which unwraps WETH and sends native ETH to `address(this)`. Additionally, `WithdrawRequestNFT.claimWithdraw(requestId)` in `EtherFiWithdrawRequestManager` and `PirexETH.redeemWithUpxEth` in `DineroWithdrawRequestManager` send ETH to the caller during withdrawal finalization. However, neither these contracts nor their base contract `AbstractWithdrawRequestManager` implement a `receive()` or `fallback()` payable function. As a result, any incoming ETH transfer will revert, completely breaking the staking and withdrawal finalization flows for these managers.\nRECOMMENDATION: Add a `receive() external payable {}` function to `AbstractWithdrawRequestManager` or to the specific child contracts that require it to accept native ETH.\n===END===\n\n===FINDING===\nTITLE: DineroWithdrawRequestManager pools upxETH balances, allowing the first finalizer to steal ETH from others in the same batch\nSEVERITY: critical\nCONFIDENCE: high\nCATEGORY: logic error\nFILE: src/withdraws/Dinero.sol\nLINES: 49-62\nDESCRIPTION: In `DineroWithdrawRequestManager._finalizeWithdrawImpl`, the contract iterates over the batch IDs associated with a `requestId` and checks the contract's total balance of `upxETH` for each batch using `upxETH.balanceOf(address(this), i)`. It then redeems this entire balance. Because `upxETH` is minted to `address(this)` for all users, if multiple users initiate withdrawals that fall into the same batch ID, their `upxETH` balances are pooled together in the contract. The first user to call `finalizeAndRedeemWithdrawRequest` for that batch will redeem the entire pooled balance, and `tokensClaimed` will include the ETH belonging to all users in that batch. This ETH will be attributed entirely to the first user's `requestId`, leaving subsequent users with 0 tokens claimed and effectively stealing their funds.\nRECOMMENDATION: Instead of relying on `upxETH.balanceOf(address(this), i)`, the contract must record the exact amount of `upxETH` minted (or `pxETH` redeemed) for each specific `requestId` during `_initiateWithdrawImpl`. During finalization, it should only redeem that specific recorded amount for the given batch.\n===END===\n\n===FINDING===\nTITLE: EthenaCooldownHolder calculates 0 tokens claimed if cooldown duration is 0, locking user funds\nSEVERITY: high\nCONFIDENCE: high\nCATEGORY: logic error\nFILE: src/withdraws/Ethena.sol\nLINES: 30-45\nDESCRIPTION: In `EthenaCooldownHolder._startCooldown`, if `sUSDe.cooldownDuration() == 0`, the contract immediately redeems `sUSDe` for `USDe`, and the `USDe` is held in the `EthenaCooldownHolder` contract. Later, when `_finalizeCooldown` is called, it calculates `tokensClaimed = balanceAfter - balanceBefore`. Since `userCooldown.cooldownEnd` is 0, `sUSDe.unstake` is not called, meaning `balanceAfter` equals `balanceBefore`. As a result, `tokensClaimed` is calculated as 0, and 0 `USDe` is transferred to the manager. The actual `USDe` redeemed during `_startCooldown` remains permanently stuck in the `EthenaCooldownHolder` contract, and the user receives nothing.\nRECOMMENDATION: Change the `tokensClaimed` calculation in `_finalizeCooldown` to simply use the total `USDe` balance of the holder contract, i.e., `tokensClaimed = USDe.balanceOf(address(this));`, since the cloned holder is dedicated to a single withdrawal request and all its `USDe` belongs to that request.\n===END==="
+}

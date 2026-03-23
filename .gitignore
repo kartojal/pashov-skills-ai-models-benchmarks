@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+dashboard/node_modules/
+
+# Build output
+dashboard/dist/
+
+# OpenCode
+.opencode/
+
+# Logs (optional - remove this line if you want to keep logs)
+# *.log
+
+# OS
+.DS_Store

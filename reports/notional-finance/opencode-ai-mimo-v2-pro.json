@@ -1,0 +1,437 @@
+{
+  "metadata": {
+    "model": "xiaomi/mimo-v2-pro",
+    "harness": "opencode",
+    "target": "notional-finance",
+    "timestamp": "2026-03-23T19:05:53.625515+00:00",
+    "duration_seconds": 2124,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 26,
+    "critical": 2,
+    "high": 1,
+    "medium": 12,
+    "low": 9,
+    "informational": 2
+  },
+  "findings": [
+    {
+      "title": "Unprotected `forceWithdraw` function allows arbitrary withdrawal initiation",
+      "severity": "high",
+      "confidence": "high",
+      "category": "access control",
+      "description": "The `forceWithdraw` function lacks access control modifiers, allowing any external account to initiate a withdrawal for any user's position when the health factor is negative. While the function checks that `borrowed <= maxBorrow` must be false (i.e., position is unhealthy), this still allows griefing attacks where an attacker forces withdrawals on unhealthy positions, potentially disrupting user strategies or causing unwanted liquidations.",
+      "recommendation": "Add appropriate access control (e.g., only liquidators, governance, or the position owner) or implement a time-delay mechanism for forced withdrawals.",
+      "id": "F-001",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/routers/AbstractLendingRouter.sol",
+        "lines": "107-115"
+      }
+    },
+    {
+      "title": "Transient storage variables not cleared in error paths",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "logic errors",
+      "description": "The `setCurrentAccount` modifier sets `t_CurrentAccount` but only clears it in the `clearCurrentAccount` function. If a transaction reverts after `t_CurrentAccount` is set but before `clearCurrentAccount` is called, the transient storage variable may retain its value for subsequent transactions in the same block. This could lead to unexpected behavior where the wrong account is used for valuations.",
+      "recommendation": "Use a more robust pattern for transient storage management, such as storing previous values and restoring them in a finally-like block, or ensure all code paths clear the transient variables.",
+      "id": "F-002",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "130-135, 145-150, 155-160"
+      }
+    },
+    {
+      "title": "Potential division by zero in conversion functions",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "integer issues",
+      "description": "The `convertSharesToYieldToken` and `convertYieldTokenToShares` functions divide by `effectiveSupply()`. If `effectiveSupply()` returns 0 (which could happen if `totalSupply() + VIRTUAL_SHARES == s_escrowedShares`), the division will revert, causing denial of service for all conversion operations.",
+      "recommendation": "Add a check to ensure `effectiveSupply() > 0` before division, or ensure `s_escrowedShares` cannot exceed `totalSupply() + VIRTUAL_SHARES`.",
+      "id": "F-003",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "73-76, 80-83"
+      }
+    },
+    {
+      "title": "Missing validation for zero asset amount in `_mintSharesGivenAssets`",
+      "severity": "low",
+      "confidence": "high",
+      "category": "logic errors",
+      "description": "The `_mintSharesGivenAssets` function returns 0 if `assets == 0`, but still proceeds to call `_mintYieldTokens` and `_mint` with potentially zero amounts. While this may not cause immediate issues, it could lead to unnecessary gas consumption and event emissions for zero-value operations.",
+      "recommendation": "Return early if `assets == 0` before performing any operations.",
+      "id": "F-004",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "285-295"
+      }
+    },
+    {
+      "title": "Oracle price manipulation risk via `TRADING_MODULE.getOraclePrice`",
+      "severity": "medium",
+      "confidence": "low",
+      "category": "oracle manipulation",
+      "description": "The `convertYieldTokenToAsset` function relies on `TRADING_MODULE.getOraclePrice` for price data. If the trading module's oracle implementation is compromised or manipulable, it could affect all valuation calculations, share conversions, and fee accruals throughout the system.",
+      "recommendation": "Consider implementing multiple oracle sources with fallback mechanisms, or add circuit breakers for extreme price deviations.",
+      "id": "F-005",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "107-110"
+      }
+    },
+    {
+      "title": "Division by zero in reward accumulation",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "integer-issues",
+      "description": "In `_accumulateSecondaryRewardViaClaim`, if `effectiveSupplyBefore` is zero and `tokensClaimed` is non-zero, the division `(tokensClaimed * DEFAULT_PRECISION) / effectiveSupplyBefore` will revert, causing a denial of service for reward claims. This can occur if the vault has no supply but rewards are claimed.",
+      "recommendation": "Add a check for `effectiveSupplyBefore > 0` before dividing. If zero, skip accumulation or set accumulated reward per share to zero.",
+      "id": "F-006",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "273-278"
+      }
+    },
+    {
+      "title": "Reentrancy in reward token transfer",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "reentrancy",
+      "description": "The `_claimRewardToken` function uses a try-catch for reward token transfers. If the reward token is malicious and reenters, it could manipulate state during `updateAccountRewards`, which is called in vault operations (mint, burn, liquidation). Although reward debt is updated before transfer, reentrancy could still lead to inconsistencies.",
+      "recommendation": "Apply a reentrancy guard to `updateAccountRewards` or ensure all state updates occur before external calls.",
+      "id": "F-007",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "233-250"
+      }
+    },
+    {
+      "title": "Centralization risks in reward management",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "centralization-risks",
+      "description": "The `onlyUpgradeAdmin` modifier allows the admin to set reward tokens, emission rates, and migrate reward pools. Compromised admin keys could lead to malicious updates or fund loss.",
+      "recommendation": "Implement a timelock or multi-signature mechanism for admin functions.",
+      "id": "F-008",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "100-101"
+      }
+    },
+    {
+      "title": "Potential DOS in reward claim during migration",
+      "severity": "low",
+      "confidence": "medium",
+      "category": "logic-errors",
+      "description": "The `migrateRewardPool` function calls `_claimVaultRewards`, which may skip claiming if `block.timestamp < rewardPool.lastClaimTimestamp + rewardPool.forceClaimAfter`. This could leave rewards in the old pool during migration.",
+      "recommendation": "Force a claim during migration by bypassing the `forceClaimAfter` condition.",
+      "id": "F-009",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "70-71"
+      }
+    },
+    {
+      "title": "Unlimited approval in ConvexRewardManager",
+      "severity": "low",
+      "confidence": "high",
+      "category": "access-control",
+      "description": "The `_depositIntoNewRewardPool` function approves the booster for `type(uint256).max`. If the booster is compromised, it could drain the reward manager's tokens.",
+      "recommendation": "Approve only the exact amount needed for deposit.",
+      "id": "F-010",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/rewards/ConvexRewardManager.sol",
+        "lines": "20-21"
+      }
+    },
+    {
+      "title": "Oracle dependency in MorphoLendingRouter",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "oracle-manipulation",
+      "description": "The `healthFactor` function relies on `IYieldStrategy(vault).price(borrower)` for collateral valuation. If the oracle is manipulated, health factors could be incorrect, leading to improper liquidations or insolvency.",
+      "recommendation": "Use multiple oracles or a time-weighted average price to mitigate manipulation.",
+      "id": "F-011",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/routers/MorphoLendingRouter.sol",
+        "lines": "173-174"
+      }
+    },
+    {
+      "title": "Centralization in MorphoLendingRouter",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "centralization-risks",
+      "description": "The `initializeMarket` function is restricted to the upgrade admin, creating a single point of failure. A compromised admin could set malicious parameters.",
+      "recommendation": "Use a timelock or decentralized governance for critical operations.",
+      "id": "F-012",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/routers/MorphoLendingRouter.sol",
+        "lines": "30-31"
+      }
+    },
+    {
+      "title": "Reentrancy in DineroWithdrawRequestManager._initiateWithdrawImpl",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "reentrancy",
+      "description": "The function makes external calls to `apxETH.redeem` and `PirexETH.initiateRedemption` before updating the state (incrementing `s_batchNonce`). This could allow an attacker to reenter the function and generate the same requestId for two different withdrawals.",
+      "recommendation": "Update the state (increment `s_batchNonce`) before making external calls, or use a reentrancy guard.",
+      "id": "F-013",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/withdraws/Dinero.sol",
+        "lines": "30-45"
+      }
+    },
+    {
+      "title": "DOS in DineroWithdrawRequestManager due to loops over batch ids",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "DOS",
+      "description": "The functions `_finalizeWithdrawImpl` and `canFinalizeWithdrawRequest` loop through the batch ids from `initialBatchId` to `finalBatchId`. If the redemption spans a large number of batches, the loop could run out of gas, causing a denial of service.",
+      "recommendation": "Consider limiting the number of batches that can be processed in one transaction, or use a different design that does not require looping.",
+      "id": "F-014",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/withdraws/Dinero.sol",
+        "lines": "55-70, 72-85"
+      }
+    },
+    {
+      "title": "License Typo in PendlePTOracle",
+      "severity": "low",
+      "confidence": "high",
+      "category": "other",
+      "description": "The license identifier is \"BSUL-1.1\" instead of \"BUSL-1.1\".",
+      "recommendation": "Correct the license identifier.",
+      "id": "F-015",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/oracles/PendlePTOracle.sol",
+        "lines": "1"
+      }
+    },
+    {
+      "title": "Unchecked return value of ERC4626 deposit",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "unchecked call",
+      "description": "The `_stakeTokens` function calls `IERC4626(YIELD_TOKEN).deposit(amount, address(this))` but does not check the return value (amount of shares minted). If the deposit fails or returns 0, the contract will have approved and transferred tokens but received no shares, leading to loss of funds.",
+      "recommendation": "Check the return value of `deposit` and revert if it is 0 or less than expected.",
+      "id": "F-016",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/withdraws/GenericERC4626.sol",
+        "lines": "28-31"
+      }
+    },
+    {
+      "title": "No slippage protection on first trade in PendlePT_sUSDe",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "oracle manipulation",
+      "description": "The first trade (sUSDe to sDAI) has `limit: 0`, meaning no slippage protection. This makes the trade vulnerable to front-running and pool manipulation, potentially resulting in significant loss of funds.",
+      "recommendation": "Add slippage protection by setting a reasonable `limit` (minimum amount out) for the first trade, possibly derived from an oracle or user input.",
+      "id": "F-017",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/staking/PendlePT_sUSDe.sol",
+        "lines": "32-42"
+      }
+    },
+    {
+      "title": "Centralization risk in AddressRegistry",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "centralization risk",
+      "description": "The `upgradeAdmin` has extensive control over critical protocol parameters, including setting withdraw request managers, whitelisting vaults, and setting lending routers. Compromise of the `upgradeAdmin` key could lead to protocol takeover.",
+      "recommendation": "Implement a multi-sig or timelock for the `upgradeAdmin` role, and consider decentralizing control through governance.",
+      "id": "F-018",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/proxy/AddressRegistry.sol",
+        "lines": "24-30,54-60,62-68,70-74,76-80,82-86"
+      }
+    },
+    {
+      "title": "Centralization risk in TimelockUpgradeableProxy",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "centralization risk",
+      "description": "The `upgradeAdmin` and `pauseAdmin` have centralized control over proxy upgrades and pausing. This could lead to censorship or malicious upgrades if keys are compromised.",
+      "recommendation": "Use a multi-sig or decentralized governance for admin roles, and ensure the timelock is sufficiently long.",
+      "id": "F-019",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/proxy/TimelockUpgradeableProxy.sol",
+        "lines": "24-30,38-44,46-52,54-60"
+      }
+    },
+    {
+      "title": "Potential underflow in EtherFi withdraw",
+      "severity": "low",
+      "confidence": "low",
+      "category": "integer issue",
+      "description": "The subtraction `balanceAfter - balanceBefore` could underflow if `weETH.unwrap` does not increase the eETH balance as expected (e.g., due to fees or a bug). While Solidity 0.8.x will revert on underflow, this could cause the function to be stuck.",
+      "recommendation": "Consider using a safe subtraction or checking that `balanceAfter >= balanceBefore` before subtraction.",
+      "id": "F-020",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/withdraws/EtherFi.sol",
+        "lines": "14-17"
+      }
+    },
+    {
+      "title": "Reliance on external withdraw request manager for valuation",
+      "severity": "low",
+      "confidence": "medium",
+      "category": "oracle manipulation",
+      "description": "The `convertToAssets` function uses `withdrawRequestManager.getWithdrawRequestValue` to determine the value of a withdraw request. If the withdraw request manager is malicious or has a bug, it could return an incorrect value, leading to mispricing of shares.",
+      "recommendation": "Ensure the withdraw request manager is trusted and audited, or implement additional checks on the returned value.",
+      "id": "F-021",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/staking/AbstractStakingStrategy.sol",
+        "lines": "38-48"
+      }
+    },
+    {
+      "title": "No minimum amount out enforced for Pendle swap",
+      "severity": "low",
+      "confidence": "medium",
+      "category": "oracle manipulation",
+      "description": "The `_mintYieldTokens` function calls `PendlePTLib.swapExactTokenForPt` with user-provided `pendleData` that includes `minPtOut`. If the user sets `minPtOut` to 0, they are vulnerable to slippage and front-running, potentially receiving fewer PT tokens than expected.",
+      "recommendation": "Enforce a reasonable minimum `minPtOut` based on an oracle or a protocol-defined threshold, or clearly document the risk to users.",
+      "id": "F-022",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/staking/PendlePT.sol",
+        "lines": "54-64"
+      }
+    },
+    {
+      "title": "Reentrancy in CurveConvexLib checkReentrancyContext for Curve V2",
+      "severity": "low",
+      "confidence": "medium",
+      "category": "reentrancy",
+      "description": "The `checkReentrancyContext` function for Curve V2 calls `remove_liquidity` with 1 wei of LP tokens, which transfers a small amount of tokens to the contract. This could potentially trigger a callback if the token is ERC777 or has transfer hooks, enabling a reentrancy attack.",
+      "recommendation": "Use a reentrancy guard or ensure the tokens are standard ERC20 without callbacks. Consider using a minimal amount that doesn't affect the pool's state.",
+      "id": "F-023",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/single-sided-lp/CurveConvex2Token.sol",
+        "lines": "115-125"
+      }
+    },
+    {
+      "title": "Unused return value in _executeRedemptionTrades",
+      "severity": "informational",
+      "confidence": "high",
+      "category": "logic",
+      "description": "The function `_executeRedemptionTrades` returns the final primary balance, but the caller in `_redeemShares` ignores this return value. This could indicate a logic error where the returned balance is intended to be used for validation or accounting.",
+      "recommendation": "Either use the returned value to ensure the trades were successful or remove the return value if it's unnecessary.",
+      "id": "F-024",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/single-sided-lp/AbstractSingleSidedLP.sol",
+        "lines": "165-185"
+      }
+    },
+    {
+      "title": "Hardcoded external contract addresses in IDinero.sol",
+      "severity": "informational",
+      "confidence": "high",
+      "category": "centralization",
+      "description": "The file defines constants for external contracts (PirexETH, pxETH, apxETH, upxETH) with hardcoded addresses. If these contracts are upgraded or become deprecated, the system cannot adapt without redeployment.",
+      "recommendation": "Use a registry pattern or governance to set these addresses, allowing updates without redeploying the entire system.",
+      "id": "F-025",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/interfaces/IDinero.sol",
+        "lines": "45-48"
+      }
+    },
+    {
+      "title": "Non-standard ERC20 interface may cause integration issues",
+      "severity": "low",
+      "confidence": "high",
+      "category": "logic errors",
+      "description": "The IEIP20NonStandard interface defines ERC20 functions without return values, which violates the ERC20 standard. While this is intentional to support non-standard tokens, any contract using this interface must handle the lack of return values correctly. If a standard ERC20 token is used where this interface is expected, calls may fail silently or behave unexpectedly because the return value (bool) will be interpreted as a value on the stack, potentially causing corruption.",
+      "recommendation": "Ensure that any contract interacting with tokens via this interface uses low-level calls (call, staticcall) and checks the return data length to handle both standard and non-standard tokens safely. Consider using OpenZeppelin's SafeERC20 library with a custom wrapper for non-standard tokens.",
+      "id": "F-026",
+      "agents_reporting": [
+        "opencode-ai-mimo-v2-pro"
+      ],
+      "location": {
+        "file": "src/interfaces/IEIP20NonStandard.sol",
+        "lines": "1-50"
+      }
+    }
+  ],
+  "raw_output": "## Batch 1\n**Title:** Unprotected `forceWithdraw` function allows arbitrary withdrawal initiation\n**Severity:** high\n**Confidence:** high\n**Category:** access control\n**File:** src/routers/AbstractLendingRouter.sol\n**Lines:** 107-115\n**Description:** The `forceWithdraw` function lacks access control modifiers, allowing any external account to initiate a withdrawal for any user's position when the health factor is negative. While the function checks that `borrowed <= maxBorrow` must be false (i.e., position is unhealthy), this still allows griefing attacks where an attacker forces withdrawals on unhealthy positions, potentially disrupting user strategies or causing unwanted liquidations.\n**Recommendation:** Add appropriate access control (e.g., only liquidators, governance, or the position owner) or implement a time-delay mechanism for forced withdrawals.\n\n**Title:** Transient storage variables not cleared in error paths\n**Severity:** medium\n**Confidence:** medium\n**Category:** logic errors\n**File:** src/AbstractYieldStrategy.sol\n**Lines:** 130-135, 145-150, 155-160\n**Description:** The `setCurrentAccount` modifier sets `t_CurrentAccount` but only clears it in the `clearCurrentAccount` function. If a transaction reverts after `t_CurrentAccount` is set but before `clearCurrentAccount` is called, the transient storage variable may retain its value for subsequent transactions in the same block. This could lead to unexpected behavior where the wrong account is used for valuations.\n**Recommendation:** Use a more robust pattern for transient storage management, such as storing previous values and restoring them in a finally-like block, or ensure all code paths clear the transient variables.\n\n**Title:** Potential division by zero in conversion functions\n**Severity:** medium\n**Confidence:** medium\n**Category:** integer issues\n**File:** src/AbstractYieldStrategy.sol\n**Lines:** 73-76, 80-83\n**Description:** The `convertSharesToYieldToken` and `convertYieldTokenToShares` functions divide by `effectiveSupply()`. If `effectiveSupply()` returns 0 (which could happen if `totalSupply() + VIRTUAL_SHARES == s_escrowedShares`), the division will revert, causing denial of service for all conversion operations.\n**Recommendation:** Add a check to ensure `effectiveSupply() > 0` before division, or ensure `s_escrowedShares` cannot exceed `totalSupply() + VIRTUAL_SHARES`.\n\n**Title:** Missing validation for zero asset amount in `_mintSharesGivenAssets`\n**Severity:** low\n**Confidence:** high\n**Category:** logic errors\n**File:** src/AbstractYieldStrategy.sol\n**Lines:** 285-295\n**Description:** The `_mintSharesGivenAssets` function returns 0 if `assets == 0`, but still proceeds to call `_mintYieldTokens` and `_mint` with potentially zero amounts. While this may not cause immediate issues, it could lead to unnecessary gas consumption and event emissions for zero-value operations.\n**Recommendation:** Return early if `assets == 0` before performing any operations.\n\n**Title:** Oracle price manipulation risk via `TRADING_MODULE.getOraclePrice`\n**Severity:** medium\n**Confidence:** low\n**Category:** oracle manipulation\n**File:** src/AbstractYieldStrategy.sol\n**Lines:** 107-110\n**Description:** The `convertYieldTokenToAsset` function relies on `TRADING_MODULE.getOraclePrice` for price data. If the trading module's oracle implementation is compromised or manipulable, it could affect all valuation calculations, share conversions, and fee accruals throughout the system.\n**Recommendation:** Consider implementing multiple oracle sources with fallback mechanisms, or add circuit breakers for extreme price deviations.\n\n```json\n{\"findings\":[{\"title\":\"Unprotected `forceWithdraw` function allows arbitrary withdrawal initiation\",\"severity\":\"high\",\"confidence\":\"high\",\"category\":\"access control\",\"description\":\"The `forceWithdraw` function lacks access control modifiers, allowing any external account to initiate a withdrawal for any user's position when the health factor is negative. While the function checks that `borrowed <= maxBorrow` must be false (i.e., position is unhealthy), this still allows griefing attacks where an attacker forces withdrawals on unhealthy positions, potentially disrupting user strategies or causing unwanted liquidations.\",\"file\":\"src/routers/AbstractLendingRouter.sol\",\"lines\":\"107-115\",\"recommendation\":\"Add appropriate access control (e.g., only liquidators, governance, or the position owner) or implement a time-delay mechanism for forced withdrawals.\"},{\"title\":\"Transient storage variables not cleared in error paths\",\"severity\":\"medium\",\"confidence\":\"medium\",\"category\":\"logic errors\",\"description\":\"The `setCurrentAccount` modifier sets `t_CurrentAccount` but only clears it in the `clearCurrentAccount` function. If a transaction reverts after `t_CurrentAccount` is set but before `clearCurrentAccount` is called, the transient storage variable may retain its value for subsequent transactions in the same block. This could lead to unexpected behavior where the wrong account is used for valuations.\",\"file\":\"src/AbstractYieldStrategy.sol\",\"lines\":\"130-135, 145-150, 155-160\",\"recommendation\":\"Use a more robust pattern for transient storage management, such as storing previous values and restoring them in a finally-like block, or ensure all code paths clear the transient variables.\"},{\"title\":\"Potential division by zero in conversion functions\",\"severity\":\"medium\",\"confidence\":\"medium\",\"category\":\"integer issues\",\"description\":\"The `convertSharesToYieldToken` and `convertYieldTokenToShares` functions divide by `effectiveSupply()`. If `effectiveSupply()` returns 0 (which could happen if `totalSupply() + VIRTUAL_SHARES == s_escrowedShares`), the division will revert, causing denial of service for all conversion operations.\",\"file\":\"src/AbstractYieldStrategy.sol\",\"lines\":\"73-76, 80-83\",\"recommendation\":\"Add a check to ensure `effectiveSupply() > 0` before division, or ensure `s_escrowedShares` cannot exceed `totalSupply() + VIRTUAL_SHARES`.\"},{\"title\":\"Missing validation for zero asset amount in `_mintSharesGivenAssets`\",\"severity\":\"low\",\"confidence\":\"high\",\"category\":\"logic errors\",\"description\":\"The `_mintSharesGivenAssets` function returns 0 if `assets == 0`, but still proceeds to call `_mintYieldTokens` and `_mint` with potentially zero amounts. While this may not cause immediate issues, it could lead to unnecessary gas consumption and event emissions for zero-value operations.\",\"file\":\"src/AbstractYieldStrategy.sol\",\"lines\":\"285-295\",\"recommendation\":\"Return early if `assets == 0` before performing any operations.\"},{\"title\":\"Oracle price manipulation risk via `TRADING_MODULE.getOraclePrice`\",\"severity\":\"medium\",\"confidence\":\"low\",\"category\":\"oracle manipulation\",\"description\":\"The `convertYieldTokenToAsset` function relies on `TRADING_MODULE.getOraclePrice` for price data. If the trading module's oracle implementation is compromised or manipulable, it could affect all valuation calculations, share conversions, and fee accruals throughout the system.\",\"file\":\"src/AbstractYieldStrategy.sol\",\"lines\":\"107-110\",\"recommendation\":\"Consider implementing multiple oracle sources with fallback mechanisms, or add circuit breakers for extreme price deviations.\"}]}\n```\n\n## Batch 2\n**Title:** Division by zero in reward accumulation  \n**Severity:** critical  \n**Confidence:** high  \n**Category:** integer-issues  \n**File:** src/rewards/AbstractRewardManager.sol  \n**Lines:** 273-278  \n**Description:** In `_accumulateSecondaryRewardViaClaim`, if `effectiveSupplyBefore` is zero and `tokensClaimed` is non-zero, the division `(tokensClaimed * DEFAULT_PRECISION) / effectiveSupplyBefore` will revert, causing a denial of service for reward claims. This can occur if the vault has no supply but rewards are claimed.  \n**Recommendation:** Add a check for `effectiveSupplyBefore > 0` before dividing. If zero, skip accumulation or set accumulated reward per share to zero.\n\n**Title:** Reentrancy in reward token transfer  \n**Severity:** medium  \n**Confidence:** medium  \n**Category:** reentrancy  \n**File:** src/rewards/AbstractRewardManager.sol  \n**Lines:** 233-250  \n**Description:** The `_claimRewardToken` function uses a try-catch for reward token transfers. If the reward token is malicious and reenters, it could manipulate state during `updateAccountRewards`, which is called in vault operations (mint, burn, liquidation). Although reward debt is updated before transfer, reentrancy could still lead to inconsistencies.  \n**Recommendation:** Apply a reentrancy guard to `updateAccountRewards` or ensure all state updates occur before external calls.\n\n**Title:** Centralization risks in reward management  \n**Severity:** medium  \n**Confidence:** high  \n**Category:** centralization-risks  \n**File:** src/rewards/AbstractRewardManager.sol  \n**Lines:** 100-101  \n**Description:** The `onlyUpgradeAdmin` modifier allows the admin to set reward tokens, emission rates, and migrate reward pools. Compromised admin keys could lead to malicious updates or fund loss.  \n**Recommendation:** Implement a timelock or multi-signature mechanism for admin functions.\n\n**Title:** Potential DOS in reward claim during migration  \n**Severity:** low  \n**Confidence:** medium  \n**Category:** logic-errors  \n**File:** src/rewards/AbstractRewardManager.sol  \n**Lines:** 70-71  \n**Description:** The `migrateRewardPool` function calls `_claimVaultRewards`, which may skip claiming if `block.timestamp < rewardPool.lastClaimTimestamp + rewardPool.forceClaimAfter`. This could leave rewards in the old pool during migration.  \n**Recommendation:** Force a claim during migration by bypassing the `forceClaimAfter` condition.\n\n**Title:** Unlimited approval in ConvexRewardManager  \n**Severity:** low  \n**Confidence:** high  \n**Category:** access-control  \n**File:** src/rewards/ConvexRewardManager.sol  \n**Lines:** 20-21  \n**Description:** The `_depositIntoNewRewardPool` function approves the booster for `type(uint256).max`. If the booster is compromised, it could drain the reward manager's tokens.  \n**Recommendation:** Approve only the exact amount needed for deposit.\n\n**Title:** Oracle dependency in MorphoLendingRouter  \n**Severity:** medium  \n**Confidence:** medium  \n**Category:** oracle-manipulation  \n**File:** src/routers/MorphoLendingRouter.sol  \n**Lines:** 173-174  \n**Description:** The `healthFactor` function relies on `IYieldStrategy(vault).price(borrower)` for collateral valuation. If the oracle is manipulated, health factors could be incorrect, leading to improper liquidations or insolvency.  \n**Recommendation:** Use multiple oracles or a time-weighted average price to mitigate manipulation.\n\n**Title:** Centralization in MorphoLendingRouter  \n**Severity:** medium  \n**Confidence:** high  \n**Category:** centralization-risks  \n**File:** src/routers/MorphoLendingRouter.sol  \n**Lines:** 30-31  \n**Description:** The `initializeMarket` function is restricted to the upgrade admin, creating a single point of failure. A compromised admin could set malicious parameters.  \n**Recommendation:** Use a timelock or decentralized governance for critical operations.\n\n```json\n{\n  \"findings\": [\n    {\n      \"title\": \"Division by zero in reward accumulation\",\n      \"severity\": \"critical\",\n      \"confidence\": \"high\",\n      \"category\": \"integer-issues\",\n      \"description\": \"In `_accumulateSecondaryRewardViaClaim`, if `effectiveSupplyBefore` is zero and `tokensClaimed` is non-zero, the division `(tokensClaimed * DEFAULT_PRECISION) / effectiveSupplyBefore` will revert, causing a denial of service for reward claims. This can occur if the vault has no supply but rewards are claimed.\",\n      \"file\": \"src/rewards/AbstractRewardManager.sol\",\n      \"lines\": \"273-278\",\n      \"recommendation\": \"Add a check for `effectiveSupplyBefore > 0` before dividing. If zero, skip accumulation or set accumulated reward per share to zero.\"\n    },\n    {\n      \"title\": \"Reentrancy in reward token transfer\",\n      \"severity\": \"medium\",\n      \"confidence\": \"medium\",\n      \"category\": \"reentrancy\",\n      \"description\": \"The `_claimRewardToken` function uses a try-catch for reward token transfers. If the reward token is malicious and reenters, it could manipulate state during `updateAccountRewards`, which is called in vault operations (mint, burn, liquidation). Although reward debt is updated before transfer, reentrancy could still lead to inconsistencies.\",\n      \"file\": \"src/rewards/AbstractRewardManager.sol\",\n      \"lines\": \"233-250\",\n      \"recommendation\": \"Apply a reentrancy guard to `updateAccountRewards` or ensure all state updates occur before external calls.\"\n    },\n    {\n      \"title\": \"Centralization risks in reward management\",\n      \"severity\": \"medium\",\n      \"confidence\": \"high\",\n      \"category\": \"centralization-risks\",\n      \"description\": \"The `onlyUpgradeAdmin` modifier allows the admin to set reward tokens, emission rates, and migrate reward pools. Compromised admin keys could lead to malicious updates or fund loss.\",\n      \"file\": \"src/rewards/AbstractRewardManager.sol\",\n      \"lines\": \"100-101\",\n      \"recommendation\": \"Implement a timelock or multi-signature mechanism for admin functions.\"\n    },\n    {\n      \"title\": \"Potential DOS in reward claim during migration\",\n      \"severity\": \"low\",\n      \"confidence\": \"medium\",\n      \"category\": \"logic-errors\",\n      \"description\": \"The `migrateRewardPool` function calls `_claimVaultRewards`, which may skip claiming if `block.timestamp < rewardPool.lastClaimTimestamp + rewardPool.forceClaimAfter`. This could leave rewards in the old pool during migration.\",\n      \"file\": \"src/rewards/AbstractRewardManager.sol\",\n      \"lines\": \"70-71\",\n      \"recommendation\": \"Force a claim during migration by bypassing the `forceClaimAfter` condition.\"\n    },\n    {\n      \"title\": \"Unlimited approval in ConvexRewardManager\",\n      \"severity\": \"low\",\n      \"confidence\": \"high\",\n      \"category\": \"access-control\",\n      \"description\": \"The `_depositIntoNewRewardPool` function approves the booster for `type(uint256).max`. If the booster is compromised, it could drain the reward manager's tokens.\",\n      \"file\": \"src/rewards/ConvexRewardManager.sol\",\n      \"lines\": \"20-21\",\n      \"recommendation\": \"Approve only the exact amount needed for deposit.\"\n    },\n    {\n      \"title\": \"Oracle dependency in MorphoLendingRouter\",\n      \"severity\": \"medium\",\n      \"confidence\": \"medium\",\n      \"category\": \"oracle-manipulation\",\n      \"description\": \"The `healthFactor` function relies on `IYieldStrategy(vault).price(borrower)` for collateral valuation. If the oracle is manipulated, health factors could be incorrect, leading to improper liquidations or insolvency.\",\n      \"file\": \"src/routers/MorphoLendingRouter.sol\",\n      \"lines\": \"173-174\",\n      \"recommendation\": \"Use multiple oracles or a time-weighted average price to mitigate manipulation.\"\n    },\n    {\n      \"title\": \"Centralization in MorphoLendingRouter\",\n      \"severity\": \"medium\",\n      \"confidence\": \"high\",\n      \"category\": \"centralization-risks\",\n      \"description\": \"The `initializeMarket` function is restricted to the upgrade admin, creating a single point of failure. A compromised admin could set malicious parameters.\",\n      \"file\": \"src/routers/MorphoLendingRouter.sol\",\n      \"lines\": \"30-31\",\n      \"recommendation\": \"Use a timelock or decentralized governance for critical operations.\"\n    }\n  ]\n}\n```\n\n## Batch 3\n```json\n{\n  \"findings\": [\n    {\n      \"title\": \"Reentrancy in DineroWithdrawRequestManager._initiateWithdrawImpl\",\n      \"severity\": \"critical\",\n      \"confidence\": \"high\",\n      \"category\": \"reentrancy\",\n      \"description\": \"The function makes external calls to `apxETH.redeem` and `PirexETH.initiateRedemption` before updating the state (incrementing `s_batchNonce`). This could allow an attacker to reenter the function and generate the same requestId for two different withdrawals.\",\n      \"file\": \"src/withdraws/Dinero.sol\",\n      \"lines\": \"30-45\",\n      \"recommendation\": \"Update the state (increment `s_batchNonce`) before making external calls, or use a reentrancy guard.\"\n    },\n    {\n      \"title\": \"DOS in DineroWithdrawRequestManager due to loops over batch ids\",\n      \"severity\": \"medium\",\n      \"confidence\": \"medium\",\n      \"category\": \"DOS\",\n      \"description\": \"The functions `_finalizeWithdrawImpl` and `canFinalizeWithdrawRequest` loop through the batch ids from `initialBatchId` to `finalBatchId`. If the redemption spans a large number of batches, the loop could run out of gas, causing a denial of service.\",\n      \"file\": \"src/withdraws/Dinero.sol\",\n      \"lines\": \"55-70, 72-85\",\n      \"recommendation\": \"Consider limiting the number of batches that can be processed in one transaction, or use a different design that does not require looping.\"\n    },\n    {\n      \"title\": \"License Typo in PendlePTOracle\",\n      \"severity\": \"low\",\n      \"confidence\": \"high\",\n      \"category\": \"other\",\n      \"description\": \"The license identifier is \\\"BSUL-1.1\\\" instead of \\\"BUSL-1.1\\\".\",\n      \"file\": \"src/oracles/PendlePTOracle.sol\",\n      \"lines\": \"1\",\n      \"recommendation\": \"Correct the license identifier.\"\n    }\n  ]\n}\n```\n\n## Batch 4\n**Title:** Unchecked return value of ERC4626 deposit\n**Severity:** medium\n**Confidence:** medium\n**Category:** unchecked call\n**File:** src/withdraws/GenericERC4626.sol\n**Lines:** 28-31\n**Description:** The `_stakeTokens` function calls `IERC4626(YIELD_TOKEN).deposit(amount, address(this))` but does not check the return value (amount of shares minted). If the deposit fails or returns 0, the contract will have approved and transferred tokens but received no shares, leading to loss of funds.\n**Recommendation:** Check the return value of `deposit` and revert if it is 0 or less than expected.\n\n**Title:** No slippage protection on first trade in PendlePT_sUSDe\n**Severity:** medium\n**Confidence:** medium\n**Category:** oracle manipulation\n**File:** src/staking/PendlePT_sUSDe.sol\n**Lines:** 32-42\n**Description:** The first trade (sUSDe to sDAI) has `limit: 0`, meaning no slippage protection. This makes the trade vulnerable to front-running and pool manipulation, potentially resulting in significant loss of funds.\n**Recommendation:** Add slippage protection by setting a reasonable `limit` (minimum amount out) for the first trade, possibly derived from an oracle or user input.\n\n**Title:** Centralization risk in AddressRegistry\n**Severity:** medium\n**Confidence:** high\n**Category:** centralization risk\n**File:** src/proxy/AddressRegistry.sol\n**Lines:** 24-30, 54-60, 62-68, 70-74, 76-80, 82-86\n**Description:** The `upgradeAdmin` has extensive control over critical protocol parameters, including setting withdraw request managers, whitelisting vaults, and setting lending routers. Compromise of the `upgradeAdmin` key could lead to protocol takeover.\n**Recommendation:** Implement a multi-sig or timelock for the `upgradeAdmin` role, and consider decentralizing control through governance.\n\n**Title:** Centralization risk in TimelockUpgradeableProxy\n**Severity:** medium\n**Confidence:** high\n**Category:** centralization risk\n**File:** src/proxy/TimelockUpgradeableProxy.sol\n**Lines:** 24-30, 38-44, 46-52, 54-60\n**Description:** The `upgradeAdmin` and `pauseAdmin` have centralized control over proxy upgrades and pausing. This could lead to censorship or malicious upgrades if keys are compromised.\n**Recommendation:** Use a multi-sig or decentralized governance for admin roles, and ensure the timelock is sufficiently long.\n\n**Title:** Potential underflow in EtherFi withdraw\n**Severity:** low\n**Confidence:** low\n**Category:** integer issue\n**File:** src/withdraws/EtherFi.sol\n**Lines:** 14-17\n**Description:** The subtraction `balanceAfter - balanceBefore` could underflow if `weETH.unwrap` does not increase the eETH balance as expected (e.g., due to fees or a bug). While Solidity 0.8.x will revert on underflow, this could cause the function to be stuck.\n**Recommendation:** Consider using a safe subtraction or checking that `balanceAfter >= balanceBefore` before subtraction.\n\n**Title:** Reliance on external withdraw request manager for valuation\n**Severity:** low\n**Confidence:** medium\n**Category:** oracle manipulation\n**File:** src/staking/AbstractStakingStrategy.sol\n**Lines:** 38-48\n**Description:** The `convertToAssets` function uses `withdrawRequestManager.getWithdrawRequestValue` to determine the value of a withdraw request. If the withdraw request manager is malicious or has a bug, it could return an incorrect value, leading to mispricing of shares.\n**Recommendation:** Ensure the withdraw request manager is trusted and audited, or implement additional checks on the returned value.\n\n**Title:** No minimum amount out enforced for Pendle swap\n**Severity:** low\n**Confidence:** medium\n**Category:** oracle manipulation\n**File:** src/staking/PendlePT.sol\n**Lines:** 54-64\n**Description:** The `_mintYieldTokens` function calls `PendlePTLib.swapExactTokenForPt` with user-provided `pendleData` that includes `minPtOut`. If the user sets `minPtOut` to 0, they are vulnerable to slippage and front-running, potentially receiving fewer PT tokens than expected.\n**Recommendation:** Enforce a reasonable minimum `minPtOut` based on an oracle or a protocol-defined threshold, or clearly document the risk to users.\n\n```json\n{\"findings\":[{\"title\":\"Unchecked return value of ERC4626 deposit\",\"severity\":\"medium\",\"confidence\":\"medium\",\"category\":\"unchecked call\",\"description\":\"The `_stakeTokens` function calls `IERC4626(YIELD_TOKEN).deposit(amount, address(this))` but does not check the return value (amount of shares minted). If the deposit fails or returns 0, the contract will have approved and transferred tokens but received no shares, leading to loss of funds.\",\"file\":\"src/withdraws/GenericERC4626.sol\",\"lines\":\"28-31\",\"recommendation\":\"Check the return value of `deposit` and revert if it is 0 or less than expected.\"},{\"title\":\"No slippage protection on first trade in PendlePT_sUSDe\",\"severity\":\"medium\",\"confidence\":\"medium\",\"category\":\"oracle manipulation\",\"description\":\"The first trade (sUSDe to sDAI) has `limit: 0`, meaning no slippage protection. This makes the trade vulnerable to front-running and pool manipulation, potentially resulting in significant loss of funds.\",\"file\":\"src/staking/PendlePT_sUSDe.sol\",\"lines\":\"32-42\",\"recommendation\":\"Add slippage protection by setting a reasonable `limit` (minimum amount out) for the first trade, possibly derived from an oracle or user input.\"},{\"title\":\"Centralization risk in AddressRegistry\",\"severity\":\"medium\",\"confidence\":\"high\",\"category\":\"centralization risk\",\"description\":\"The `upgradeAdmin` has extensive control over critical protocol parameters, including setting withdraw request managers, whitelisting vaults, and setting lending routers. Compromise of the `upgradeAdmin` key could lead to protocol takeover.\",\"file\":\"src/proxy/AddressRegistry.sol\",\"lines\":\"24-30,54-60,62-68,70-74,76-80,82-86\",\"recommendation\":\"Implement a multi-sig or timelock for the `upgradeAdmin` role, and consider decentralizing control through governance.\"},{\"title\":\"Centralization risk in TimelockUpgradeableProxy\",\"severity\":\"medium\",\"confidence\":\"high\",\"category\":\"centralization risk\",\"description\":\"The `upgradeAdmin` and `pauseAdmin` have centralized control over proxy upgrades and pausing. This could lead to censorship or malicious upgrades if keys are compromised.\",\"file\":\"src/proxy/TimelockUpgradeableProxy.sol\",\"lines\":\"24-30,38-44,46-52,54-60\",\"recommendation\":\"Use a multi-sig or decentralized governance for admin roles, and ensure the timelock is sufficiently long.\"},{\"title\":\"Potential underflow in EtherFi withdraw\",\"severity\":\"low\",\"confidence\":\"low\",\"category\":\"integer issue\",\"description\":\"The subtraction `balanceAfter - balanceBefore` could underflow if `weETH.unwrap` does not increase the eETH balance as expected (e.g., due to fees or a bug). While Solidity 0.8.x will revert on underflow, this could cause the function to be stuck.\",\"file\":\"src/withdraws/EtherFi.sol\",\"lines\":\"14-17\",\"recommendation\":\"Consider using a safe subtraction or checking that `balanceAfter >= balanceBefore` before subtraction.\"},{\"title\":\"Reliance on external withdraw request manager for valuation\",\"severity\":\"low\",\"confidence\":\"medium\",\"category\":\"oracle manipulation\",\"description\":\"The `convertToAssets` function uses `withdrawRequestManager.getWithdrawRequestValue` to determine the value of a withdraw request. If the withdraw request manager is malicious or has a bug, it could return an incorrect value, leading to mispricing of shares.\",\"file\":\"src/staking/AbstractStakingStrategy.sol\",\"lines\":\"38-48\",\"recommendation\":\"Ensure the withdraw request manager is trusted and audited, or implement additional checks on the returned value.\"},{\"title\":\"No minimum amount out enforced for Pendle swap\",\"severity\":\"low\",\"confidence\":\"medium\",\"category\":\"oracle manipulation\",\"description\":\"The `_mintYieldTokens` function calls `PendlePTLib.swapExactTokenForPt` with user-provided `pendleData` that includes `minPtOut`. If the user sets `minPtOut` to 0, they are vulnerable to slippage and front-running, potentially receiving fewer PT tokens than expected.\",\"file\":\"src/staking/PendlePT.sol\",\"lines\":\"54-64\",\"recommendation\":\"Enforce a reasonable minimum `minPtOut` based on an oracle or a protocol-defined threshold, or clearly document the risk to users.\"}]}\n```\n\n## Batch 5\n**Title:** Reentrancy in CurveConvexLib checkReentrancyContext for Curve V2  \n**Severity:** low  \n**Confidence:** medium  \n**Category:** reentrancy  \n**File:** src/single-sided-lp/CurveConvex2Token.sol  \n**Lines:** 115-125  \n**Description:** The `checkReentrancyContext` function for Curve V2 calls `remove_liquidity` with 1 wei of LP tokens, which transfers a small amount of tokens to the contract. This could potentially trigger a callback if the token is ERC777 or has transfer hooks, enabling a reentrancy attack.  \n**Recommendation:** Use a reentrancy guard or ensure the tokens are standard ERC20 without callbacks. Consider using a minimal amount that doesn't affect the pool's state.\n\n**Title:** Unused return value in _executeRedemptionTrades  \n**Severity:** informational  \n**Confidence:** high  \n**Category:** logic  \n**File:** src/single-sided-lp/AbstractSingleSidedLP.sol  \n**Lines:** 165-185  \n**Description:** The function `_executeRedemptionTrades` returns the final primary balance, but the caller in `_redeemShares` ignores this return value. This could indicate a logic error where the returned balance is intended to be used for validation or accounting.  \n**Recommendation:** Either use the returned value to ensure the trades were successful or remove the return value if it's unnecessary.\n\n**Title:** Hardcoded external contract addresses in IDinero.sol  \n**Severity:** informational  \n**Confidence:** high  \n**Category:** centralization  \n**File:** src/interfaces/IDinero.sol  \n**Lines:** 45-48  \n**Description:** The file defines constants for external contracts (PirexETH, pxETH, apxETH, upxETH) with hardcoded addresses. If these contracts are upgraded or become deprecated, the system cannot adapt without redeployment.  \n**Recommendation:** Use a registry pattern or governance to set these addresses, allowing updates without redeploying the entire system.\n\n```json\n{\n  \"findings\": [\n    {\n      \"title\": \"Reentrancy in CurveConvexLib checkReentrancyContext for Curve V2\",\n      \"severity\": \"low\",\n      \"confidence\": \"medium\",\n      \"category\": \"reentrancy\",\n      \"description\": \"The `checkReentrancyContext` function for Curve V2 calls `remove_liquidity` with 1 wei of LP tokens, which transfers a small amount of tokens to the contract. This could potentially trigger a callback if the token is ERC777 or has transfer hooks, enabling a reentrancy attack.\",\n      \"file\": \"src/single-sided-lp/CurveConvex2Token.sol\",\n      \"lines\": \"115-125\",\n      \"recommendation\": \"Use a reentrancy guard or ensure the tokens are standard ERC20 without callbacks. Consider using a minimal amount that doesn't affect the pool's state.\"\n    },\n    {\n      \"title\": \"Unused return value in _executeRedemptionTrades\",\n      \"severity\": \"informational\",\n      \"confidence\": \"high\",\n      \"category\": \"logic\",\n      \"description\": \"The function `_executeRedemptionTrades` returns the final primary balance, but the caller in `_redeemShares` ignores this return value. This could indicate a logic error where the returned balance is intended to be used for validation or accounting.\",\n      \"file\": \"src/single-sided-lp/AbstractSingleSidedLP.sol\",\n      \"lines\": \"165-185\",\n      \"recommendation\": \"Either use the returned value to ensure the trades were successful or remove the return value if it's unnecessary.\"\n    },\n    {\n      \"title\": \"Hardcoded external contract addresses in IDinero.sol\",\n      \"severity\": \"informational\",\n      \"confidence\": \"high\",\n      \"category\": \"centralization\",\n      \"description\": \"The file defines constants for external contracts (PirexETH, pxETH, apxETH, upxETH) with hardcoded addresses. If these contracts are upgraded or become deprecated, the system cannot adapt without redeployment.\",\n      \"file\": \"src/interfaces/IDinero.sol\",\n      \"lines\": \"45-48\",\n      \"recommendation\": \"Use a registry pattern or governance to set these addresses, allowing updates without redeploying the entire system.\"\n    }\n  ]\n}\n```\n\n## Batch 6\n**Title:** Non-standard ERC20 interface may cause integration issues\n**Severity:** low\n**Confidence:** high\n**Category:** logic errors\n**File:** src/interfaces/IEIP20NonStandard.sol\n**Lines:** 1-50\n**Description:** The IEIP20NonStandard interface defines ERC20 functions without return values, which violates the ERC20 standard. While this is intentional to support non-standard tokens, any contract using this interface must handle the lack of return values correctly. If a standard ERC20 token is used where this interface is expected, calls may fail silently or behave unexpectedly because the return value (bool) will be interpreted as a value on the stack, potentially causing corruption.\n**Recommendation:** Ensure that any contract interacting with tokens via this interface uses low-level calls (call, staticcall) and checks the return data length to handle both standard and non-standard tokens safely. Consider using OpenZeppelin's SafeERC20 library with a custom wrapper for non-standard tokens.\n\n```json\n{\"findings\":[{\"title\":\"Non-standard ERC20 interface may cause integration issues\",\"severity\":\"low\",\"confidence\":\"high\",\"category\":\"logic errors\",\"description\":\"The IEIP20NonStandard interface defines ERC20 functions without return values, which violates the ERC20 standard. While this is intentional to support non-standard tokens, any contract using this interface must handle the lack of return values correctly. If a standard ERC20 token is used where this interface is expected, calls may fail silently or behave unexpectedly because the return value (bool) will be interpreted as a value on the stack, potentially causing corruption.\",\"file\":\"src/interfaces/IEIP20NonStandard.sol\",\"lines\":\"1-50\",\"recommendation\":\"Ensure that any contract interacting with tokens via this interface uses low-level calls (call, staticcall) and checks the return data length to handle both standard and non-standard tokens safely. Consider using OpenZeppelin's SafeERC20 library with a custom wrapper for non-standard tokens.\"}]}\n```\n\n## Batch 7\n```json\n{\"findings\":[]}\n```"
+}
