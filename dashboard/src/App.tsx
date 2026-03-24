@@ -102,30 +102,7 @@ export function App() {
               Pashov Skills &times; AI Models Comparison
             </p>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <div className="target-buttons" style={{ display: "flex", gap: 8 }}>
-              {targets.map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setActiveTarget(t)}
-                  style={{
-                    padding: "8px 16px",
-                    borderRadius: 8,
-                    border:
-                      t === activeTarget
-                        ? "1px solid #6366f1"
-                        : "1px solid #2a2a4a",
-                    background: t === activeTarget ? "#6366f120" : "transparent",
-                    color: t === activeTarget ? "#a5b4fc" : "#8888aa",
-                    cursor: "pointer",
-                    fontSize: 13,
-                    fontWeight: 500,
-                  }}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <a
                 href="https://github.com/kartojal/pashov-skills-ai-models-benchmarks"
@@ -202,6 +179,29 @@ export function App() {
                   onMouseOut={(e) => (e.currentTarget.style.borderColor = "#2a2a4a")}
                 />
               </a>
+            </div>
+            <div className="target-buttons" style={{ display: "flex", gap: 8 }}>
+              {targets.map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setActiveTarget(t)}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: 8,
+                    border:
+                      t === activeTarget
+                        ? "1px solid #6366f1"
+                        : "1px solid #2a2a4a",
+                    background: t === activeTarget ? "#6366f120" : "transparent",
+                    color: t === activeTarget ? "#a5b4fc" : "#8888aa",
+                    cursor: "pointer",
+                    fontSize: 13,
+                    fontWeight: 500,
+                  }}
+                >
+                  {t}
+                </button>
+              ))}
             </div>
           </div>
         </div>
