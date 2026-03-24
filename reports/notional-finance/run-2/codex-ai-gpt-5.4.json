@@ -1,0 +1,165 @@
+{
+  "metadata": {
+    "model": "openai/gpt-5.4",
+    "harness": "codex",
+    "target": "notional-finance",
+    "timestamp": "2026-03-24T22:39:08Z",
+    "duration_seconds": 727,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 9,
+    "critical": 0,
+    "high": 5,
+    "medium": 4,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "LP withdrawals can be permanently bricked when one proportional exit leg rounds to zero",
+      "severity": "high",
+      "confidence": "high",
+      "category": "denial-of-service",
+      "description": "Single-sided LP withdraw initiation skips any pool token whose proportional exit balance is zero. The account is still marked as having a pending withdrawal because at least one other token request exists, but later valuation and redemption paths assume every pool token has a corresponding withdraw request. `getWithdrawRequestValue` hard-requires `hasRequest` for every token, and `finalizeAndRedeemWithdrawRequest` reads `w.sharesAmount` for every token without handling the missing-leg case. A dust-sized or imbalanced exit can therefore leave the borrower stuck in a pending-withdraw state that reverts valuation, blocks liquidation accounting, and prevents redemption.",
+      "location": {
+        "file": "src/single-sided-lp/AbstractSingleSidedLP.sol",
+        "lines": "326-333, 362-373, 387-397"
+      },
+      "recommendation": "Create explicit zero-value placeholder requests for every pool leg, or change valuation and redemption logic to skip tokens with no request and track per-leg share accounting safely.",
+      "agents_reporting": [
+        "codex-ai-gpt-5.4"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "Ethena cooldown=0 withdrawals finalize with zero payout after burning the user's sUSDe",
+      "severity": "high",
+      "confidence": "high",
+      "category": "fund-loss",
+      "description": "When `sUSDe.cooldownDuration()` is zero, `_startCooldown` immediately redeems the transferred sUSDe into USDe on the cooldown holder during initiation. Finalization later measures `balanceAfter - balanceBefore` around an `unstake` call that is skipped because `cooldownEnd` is zero, so `tokensClaimed` becomes zero even though the holder already owns the redeemed USDe. The withdraw request is then marked finalized with zero proceeds, permanently zeroing out the user’s claim while the USDe remains stranded in the holder.",
+      "location": {
+        "file": "src/withdraws/Ethena.sol",
+        "lines": "16-20, 30-49"
+      },
+      "recommendation": "If cooldown is zero, either complete the withdraw atomically at initiation and record the fixed USDe amount, or make finalization sweep the holder’s existing USDe balance instead of relying on a balance-delta around `unstake`.",
+      "agents_reporting": [
+        "codex-ai-gpt-5.4"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "Ethena cooldown requests stay priced as yield-bearing sUSDe instead of fixed USDe claims",
+      "severity": "high",
+      "confidence": "high",
+      "category": "oracle-manipulation",
+      "description": "`AbstractWithdrawRequestManager.getWithdrawRequestValue` prices every non-finalized request using the `YIELD_TOKEN` oracle. That is incorrect for Ethena withdrawals: once cooldown starts, the position is no longer accruing sUSDe yield, and for `cooldownDuration == 0` it is already converted into a fixed USDe balance at initiation. As sUSDe continues appreciating while the request sits pending, the vault overstates collateral value for escrowed positions and can allow excess borrowing against a claim whose real value is already fixed in USDe.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "322-339"
+      },
+      "recommendation": "Let withdraw managers override request valuation, and snapshot the redeemable withdraw-token amount for fixed-value cooldown flows such as Ethena instead of reusing the live yield-token oracle.",
+      "agents_reporting": [
+        "codex-ai-gpt-5.4"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "Dinero overlapping batch ranges let the first finalizer consume later users' redemption assets",
+      "severity": "high",
+      "confidence": "high",
+      "category": "shared-state-accounting",
+      "description": "Dinero request IDs only encode a nonce plus the initial and final batch IDs, but `_finalizeWithdrawImpl` redeems every `upxETH` balance the manager currently holds for each batch in the encoded range. If two users' requests overlap on one or more batches, the first request finalized will redeem the shared `upxETH` inventory and assign the entire result to its own tokenized request. Later users with overlapping ranges observe zero remaining `upxETH` for those batches and are left with underfunded or empty withdrawals.",
+      "location": {
+        "file": "src/withdraws/Dinero.sol",
+        "lines": "27-38, 57-65"
+      },
+      "recommendation": "Track per-request batch entitlements or isolate received `upxETH` per withdrawal request instead of redeeming from a shared manager-wide batch balance.",
+      "agents_reporting": [
+        "codex-ai-gpt-5.4"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "Anyone can redirect accumulated rewards to the Morpho contract by claiming on its collateral balance",
+      "severity": "high",
+      "confidence": "high",
+      "category": "access-control",
+      "description": "`claimAccountRewards` is publicly callable for any `account`. For non-router callers it ignores the supplied `sharesHeld` and instead uses `balanceOf(account)`. Because Morpho itself holds most vault shares as posted collateral, any attacker can call `claimAccountRewards(MORPHO, 0)` and force the vault to distribute reward tokens to the Morpho singleton rather than to the underlying borrowers. Those reward tokens are not claim-tracked per borrower inside Morpho, so the call can permanently strand a large portion of vault rewards.",
+      "location": {
+        "file": "src/rewards/RewardManagerMixin.sol",
+        "lines": "155-176"
+      },
+      "recommendation": "Restrict external reward claims to `msg.sender`, or only allow claims through trusted lending routers that pass the borrower being claimed for. Explicitly reject custodial protocol addresses such as Morpho.",
+      "agents_reporting": [
+        "codex-ai-gpt-5.4"
+      ]
+    },
+    {
+      "id": "F-006",
+      "title": "Claimed reward deltas are overwritten when a reward token also has an emission schedule",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "accounting",
+      "description": "`updateAccountRewards` copies the vault reward state array into memory, then `_claimVaultRewards` mutates storage to add newly claimed rewards per share. The subsequent `_accumulateSecondaryRewardViaEmissionRate` call writes storage again using the stale memory copy, so any claim-based increase made moments earlier is lost for reward tokens that also have `emissionRatePerYear > 0`. The result is permanent under-accounting and lost user rewards whenever both reward sources are active.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "158-170, 185-215, 259-284"
+      },
+      "recommendation": "After `_claimVaultRewards`, reload each reward state from storage before applying emission accumulation, or perform both accumulation paths directly on storage references.",
+      "agents_reporting": [
+        "codex-ai-gpt-5.4"
+      ]
+    },
+    {
+      "id": "F-007",
+      "title": "Dinero withdrawals permanently DoS after 65,535 requests because the batch nonce is a uint16",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "denial-of-service",
+      "description": "Each Dinero withdrawal increments `s_batchNonce`, but the nonce is stored as `uint16`. After 65,535 successful initiations, the next `++s_batchNonce` reverts under Solidity 0.8 checked arithmetic, preventing any further Dinero withdrawal requests from being created. Since the nonce participates in request ID uniqueness, this permanently bricks the manager for future users.",
+      "location": {
+        "file": "src/withdraws/Dinero.sol",
+        "lines": "10, 32-38"
+      },
+      "recommendation": "Use a much larger nonce type such as `uint256` or redesign the request ID encoding so uniqueness does not depend on a small counter.",
+      "agents_reporting": [
+        "codex-ai-gpt-5.4"
+      ]
+    },
+    {
+      "id": "F-008",
+      "title": "Curve V2 exits always force `use_eth=true`, which can strand WETH-backed withdrawals as native ETH",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "eth-weth-handling",
+      "description": "The Curve V2 exit path hardcodes `use_eth=true` for both proportional and one-coin removals. For pools whose coin address is WETH rather than native ETH, Curve will unwrap and return native ETH, but the strategy measures post-exit balances using the token address and only re-wraps when the pool token slot equals `ETH_ADDRESS`. In affected pools the code records zero WETH received while native ETH stays on the contract, causing exits and pending-withdraw valuations to undercount or strand user funds.",
+      "location": {
+        "file": "src/single-sided-lp/CurveConvex2Token.sol",
+        "lines": "205-210, 255-258, 281-286"
+      },
+      "recommendation": "Derive `use_eth` from the actual pool token slot or stored entry mode, and normalize native ETH/WETH symmetrically on both entry and exit before computing balance deltas.",
+      "agents_reporting": [
+        "codex-ai-gpt-5.4"
+      ]
+    },
+    {
+      "id": "F-009",
+      "title": "Dinero finalization gate uses the opposite liquidity comparison and can block valid withdrawals",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "logic-error",
+      "description": "`canFinalizeWithdrawRequest` returns true only when `PirexETH.outstandingRedemptions() > totalAssets`. That is the inverse of the surrounding comment and of the intended sufficiency check. As written, withdrawals remain blocked when the manager has enough assets to satisfy the covered batches, but can report finalizable precisely when total available assets are lower than the global outstanding redemptions figure.",
+      "location": {
+        "file": "src/withdraws/Dinero.sol",
+        "lines": "71-87"
+      },
+      "recommendation": "Invert the comparison to require sufficient assets before finalization, or replace the global `outstandingRedemptions` check with a request-local entitlement check that matches Dinero’s batch accounting.",
+      "agents_reporting": [
+        "codex-ai-gpt-5.4"
+      ]
+    }
+  ],
+  "raw_output": "# Security Audit — Notional Finance Leveraged Vault Strategies\n\nModel: openai/gpt-5.4 | Harness: codex | Skill: solidity-auditor v2\nTimestamp: 2026-03-24T22:39:08Z\nDuration: 517 seconds\nCommit: 0096f1f64071cafbf20062a7c092c6ec89c28275\n\n## Method\nRead the integration context in full, audited the scoped `src/` contracts only, and worked through the requested focus areas: Morpho collateral pricing, withdraw state machines, ETH/WETH handling, user-controlled trade parameters, reward accounting, rounding, and cross-chain assumptions. A runnable `$solidity-auditor` CLI was not exposed in this sandbox, so the review followed the requested solidity-auditor workflow manually against the in-scope repository state.\n\n## Summary\nTotal findings: 9\nCritical: 0\nHigh: 5\nMedium: 4\nLow: 0\nInformational: 0\n\n## Findings\n\n### [HIGH] F-001 LP withdrawals can be permanently bricked when one proportional exit leg rounds to zero\nRoot cause: LP withdraw initiation skips zero-balance legs, but valuation and redemption later assume every pool token has an associated request.\nImpact: dust-sized or imbalanced exits can trap the account in pending-withdraw state, revert valuation, and block liquidation/redemption.\nLocation: `src/single-sided-lp/AbstractSingleSidedLP.sol` lines 326-333, 362-373, 387-397.\n\n### [HIGH] F-002 Ethena cooldown=0 withdrawals finalize with zero payout after burning the user's sUSDe\nRoot cause: zero-duration cooldown redeems to USDe during initiation, but finalization only measures new USDe received during `unstake`.\nImpact: finalized requests can be recorded with zero proceeds while the holder still owns the redeemed USDe.\nLocation: `src/withdraws/Ethena.sol` lines 16-20, 30-49.\n\n### [HIGH] F-003 Ethena cooldown requests stay priced as yield-bearing sUSDe instead of fixed USDe claims\nRoot cause: generic withdraw valuation uses `YIELD_TOKEN` pricing for all non-finalized requests.\nImpact: Ethena cooldown positions are overvalued during the pending period and can support excess borrowing.\nLocation: `src/withdraws/AbstractWithdrawRequestManager.sol` lines 322-339.\n\n### [HIGH] F-004 Dinero overlapping batch ranges let the first finalizer consume later users' redemption assets\nRoot cause: Dinero finalization redeems from manager-wide `upxETH` balances for the whole batch range rather than from per-request entitlements.\nImpact: overlapping requests can steal each other’s redemption inventory depending on finalization order.\nLocation: `src/withdraws/Dinero.sol` lines 27-38, 57-65.\n\n### [HIGH] F-005 Anyone can redirect accumulated rewards to the Morpho contract by claiming on its collateral balance\nRoot cause: `claimAccountRewards` is permissionless for arbitrary accounts and uses `balanceOf(account)` for non-router callers.\nImpact: rewards attributable to collateral shares held by Morpho can be stranded on the Morpho contract instead of reaching borrowers.\nLocation: `src/rewards/RewardManagerMixin.sol` lines 155-176.\n\n### [MEDIUM] F-006 Claimed reward deltas are overwritten when a reward token also has an emission schedule\nRoot cause: reward state is copied to memory before `_claimVaultRewards`, then storage is overwritten from the stale memory copy during emission accumulation.\nImpact: vault-claimed rewards can disappear from accounting whenever direct rewards and streamed emissions are both enabled.\nLocation: `src/rewards/AbstractRewardManager.sol` lines 158-170, 185-215, 259-284.\n\n### [MEDIUM] F-007 Dinero withdrawals permanently DoS after 65,535 requests because the batch nonce is a uint16\nRoot cause: `++s_batchNonce` is checked arithmetic on a 16-bit counter used in request IDs.\nImpact: the manager becomes unable to create any new requests after enough lifetime usage.\nLocation: `src/withdraws/Dinero.sol` lines 10, 32-38.\n\n### [MEDIUM] F-008 Curve V2 exits always force `use_eth=true`, which can strand WETH-backed withdrawals as native ETH\nRoot cause: V2 exit paths always request native ETH and only re-wrap when the token slot is stored as `ETH_ADDRESS`.\nImpact: pools exposing WETH addresses can return native ETH that is neither accounted for nor returned to users correctly.\nLocation: `src/single-sided-lp/CurveConvex2Token.sol` lines 205-210, 255-258, 281-286.\n\n### [MEDIUM] F-009 Dinero finalization gate uses the opposite liquidity comparison and can block valid withdrawals\nRoot cause: `canFinalizeWithdrawRequest` returns true when outstanding redemptions are greater than available assets.\nImpact: valid withdrawals can remain blocked while deficit states may be treated as finalizable.\nLocation: `src/withdraws/Dinero.sol` lines 71-87.\n\n## Notes\nNo critical issue with direct guaranteed protocol-wide principal theft was proven from the reviewed scope. The highest-signal risks were concentrated in withdraw accounting, reward routing, and ETH/WETH normalization on Curve exits."
+}

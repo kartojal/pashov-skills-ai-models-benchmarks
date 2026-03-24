@@ -188,6 +188,7 @@ run_codex() {
   local log_file="$3"
 
   codex exec \
+    -c model_provider=openrouter \
     --model "$model_id" \
     --full-auto \
     "$prompt" \
