@@ -133,6 +133,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
           autoSkip: false,
           padding: 4,
           callback: function (_value: unknown, index: number, _ticks: unknown[]) {
+            if (isMobile && index % 2 === 1) return ""; // hide odd labels; drawn by plugin
             const labelSet = (this as any).chart.data.labels;
             const label = labelSet?.[index];
             return label;
@@ -154,10 +155,11 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
     },
   };
 
-  // Plugin to stagger even-indexed x-axis tick labels downward
+  // Plugin to draw odd-indexed x-axis labels staggered below even ones (mobile only)
   const staggerLabelsPlugin = {
     id: "staggerLabels",
     afterDraw(chart: any) {
+      if (!isMobile) return;
       const xAxis = chart.scales?.x;
       if (!xAxis) return;
       const ticks = xAxis.ticks;
@@ -166,30 +168,25 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
       const ctx = chart.ctx;
       ctx.save();
 
+      const fontSize = 8;
+      const lineHeight = fontSize + 3;
+
       ticks.forEach((_tick: any, i: number) => {
-        if (i % 2 !== 1) return; // only shift odd-indexed (0-based) labels
+        if (i % 2 !== 1) return;
         const x = xAxis.getPixelForTick(i);
         const label = chart.data.labels?.[i];
         if (!label) return;
 
         const lines = Array.isArray(label) ? label : [label];
-        const fontSize = isMobile ? 8 : 11;
-        const lineHeight = fontSize + 3;
-        const yBase = xAxis.bottom + 4;
-        const staggerOffset = isMobile ? 36 : 26;
+        // Position below the even-indexed labels
+        const yBase = xAxis.bottom + lineHeight * 2 + 8;
 
-        // Clear original label area for this tick
-        const labelWidth = 90;
-        ctx.fillStyle = "#0a0a14";
-        ctx.fillRect(x - labelWidth / 2, yBase - 2, labelWidth, lineHeight * lines.length + staggerOffset + 4);
-
-        // Draw label shifted down
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
         ctx.font = `${fontSize}px sans-serif`;
         ctx.fillStyle = "#ccc";
         lines.forEach((line: string, li: number) => {
-          ctx.fillText(line, x, yBase + staggerOffset + li * lineHeight);
+          ctx.fillText(line, x, yBase + li * lineHeight);
         });
       });
 
