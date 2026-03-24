@@ -208,10 +208,6 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
     (sum, r) => sum + r.summary.total_findings,
     0
   );
-  const avgDuration = Math.round(
-    aiReports.reduce((sum, r) => sum + r.metadata.duration_seconds, 0) /
-      aiReports.length
-  );
   // Fidelity: match count against human findings per model
   const fidelityScores = aiReports
     .map((r) => ({
@@ -267,19 +263,9 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
       <div className="score-cards-grid">
         {[
           {
-            label: "Models Tested",
-            value: aiReports.length,
-            color: "#6366f1",
-          },
-          {
             label: "Total Findings",
             value: totalFindings,
             color: "#f97316",
-          },
-          {
-            label: "Avg Duration",
-            value: `${avgDuration}s`,
-            color: "#3b82f6",
           },
           {
             label: "Best Fidelity vs Human",
@@ -333,16 +319,6 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
           </div>
         </div>
 
-        {/* Duration */}
-        <div>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>
-            Audit Duration (seconds)
-          </h3>
-          <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
-            <Bar data={durationData} options={chartOptions as any} plugins={[staggerLabelsPlugin]} />
-          </div>
-        </div>
-
         {/* Fidelity vs Human */}
         <div>
           <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>
@@ -360,6 +336,16 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
           </h3>
           <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
             <Bar data={highFidelityData} options={chartOptions as any} plugins={[staggerLabelsPlugin]} />
+          </div>
+        </div>
+
+        {/* Duration */}
+        <div>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>
+            Audit Duration (seconds)
+          </h3>
+          <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
+            <Bar data={durationData} options={chartOptions as any} plugins={[staggerLabelsPlugin]} />
           </div>
         </div>
       </div>
