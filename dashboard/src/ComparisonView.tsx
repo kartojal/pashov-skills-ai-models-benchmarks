@@ -131,7 +131,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
           maxRotation: 0,
           minRotation: 0,
           autoSkip: false,
-          padding: 4,
+          padding: isMobile ? -11 : 4,
           callback: function (_value: unknown, index: number, _ticks: unknown[]) {
             if (isMobile && index % 2 === 1) return ""; // hide odd labels; drawn by plugin
             const labelSet = (this as any).chart.data.labels;
@@ -179,7 +179,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
 
         const lines = Array.isArray(label) ? label : [label];
         // Position below the even-indexed labels
-        const yBase = xAxis.bottom + lineHeight + 6;
+        const yBase = xAxis.bottom + lineHeight - 9;
 
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
