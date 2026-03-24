@@ -7,7 +7,7 @@ import { AggregatedFindingsView } from "./AggregatedFindingsView";
 import "./responsive.css";
 
 const reports = reportsData as ReportsMap;
-const targets = Object.keys(reports).filter((t) => t !== "notional-finance");
+const targets = Object.keys(reports);
 
 function parseHash(): { target?: string; tab?: string; model?: string } {
   const params = new URLSearchParams(window.location.hash.slice(1));
@@ -29,7 +29,7 @@ function buildHash(target: string, tab: string, model: string | null): string {
 export function App() {
   const initial = parseHash();
   const [activeTarget, setActiveTarget] = useState(
-    initial.target && targets.includes(initial.target) ? initial.target : targets[0] || ""
+    initial.target && targets.includes(initial.target) ? initial.target : "notional-finance"
   );
   const [activeTab, setActiveTab] = useState<"comparison" | "details" | "aggregated">(
     initial.tab === "details" ? "details" : initial.tab === "aggregated" ? "aggregated" : "comparison"
