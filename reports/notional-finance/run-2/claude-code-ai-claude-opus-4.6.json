@@ -1,0 +1,225 @@
+{
+  "metadata": {
+    "model": "claude-opus-4.6",
+    "harness": "claude-code",
+    "target": "notional-finance",
+    "timestamp": "2026-03-24T06:00:20Z",
+    "duration_seconds": 1436,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 12,
+    "critical": 2,
+    "high": 4,
+    "medium": 6,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Zero exit balance during LP withdrawal causes permanent position lock via division-by-zero in finalizeAndRedeemWithdrawRequest",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Denial of Service / Fund Lock",
+      "description": "In BaseLPLib.finalizeAndRedeemWithdrawRequest (AbstractSingleSidedLP.sol:392), the code unconditionally divides by w.sharesAmount for each pool token: `uint256 yieldTokensBurned = uint256(w.yieldTokenAmount) * sharesToRedeem / w.sharesAmount`. When a heavily skewed Curve pool yields exitBalances[i]==0 for one token during initiateWithdraw, no WithdrawRequest is created for that token (line 363: `if (exitBalances[i] == 0) continue`). The getWithdrawRequest call returns a zero-initialized struct with sharesAmount=0, causing a division-by-zero panic. Additionally, getWithdrawRequestValue in BaseLPLib (line 332) has `require(hasRequest)` for ALL tokens, so the price oracle also reverts for the affected account, blocking Morpho's health factor check and preventing both forced withdrawals and liquidations. The user's shares are permanently escrowed (s_escrowedShares was incremented in _withdraw) with no recovery path, permanently reducing effectiveSupply and locking the user's entire collateral position.",
+      "location": {
+        "file": "src/single-sided-lp/AbstractSingleSidedLP.sol",
+        "lines": "363-392"
+      },
+      "recommendation": "In BaseLPLib.finalizeAndRedeemWithdrawRequest, skip tokens with no withdraw request: add `if (w.requestId == 0) { exitBalances[i] = 0; withdrawTokens[i] = ERC20(manager.WITHDRAW_TOKEN()); continue; }` before the yieldTokensBurned computation. Similarly, in getWithdrawRequestValue, skip tokens where hasRequest is false instead of reverting.",
+      "agents_reporting": [
+        "vector-scan-agent",
+        "execution-trace-agent",
+        "invariant-agent",
+        "first-principles-agent"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "Ethena cooldownDuration=0 causes permanent fund loss: _finalizeCooldown returns zero tokens with finalized=true",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Fund Loss",
+      "description": "In EthenaCooldownHolder._startCooldown (Ethena.sol:18-20), when sUSDe.cooldownDuration()==0, sUSDe.redeem() is called which immediately transfers USDe to the holder contract. Later in _finalizeCooldown (line 30-50), balanceBefore reads the USDe already in the holder. Since cooldownEnd==0 (no cooldown was initiated in Ethena's silo), the condition `0 < userCooldown.cooldownEnd` is false, so sUSDe.unstake() is skipped. balanceAfter==balanceBefore, so tokensClaimed=balanceAfter-balanceBefore=0. The function returns (0, true), marking finalization as successful with zero tokens. The AbstractWithdrawRequestManager._finalizeWithdraw records totalWithdraw=0 and finalized=true, then transfers 0 WITHDRAW_TOKEN to the user. The user's sUSDe was burned during _startCooldown and the equivalent USDe is permanently stranded in the holder clone contract.",
+      "location": {
+        "file": "src/withdraws/Ethena.sol",
+        "lines": "16-50"
+      },
+      "recommendation": "In _startCooldown when duration==0, store the redeemed USDe amount in state. In _finalizeCooldown when cooldownEnd==0, transfer the holder's full USDe balance to the manager instead of measuring a balance delta. Alternatively, when duration==0, immediately transfer USDe to the manager during _startCooldown and record it.",
+      "agents_reporting": [
+        "vector-scan-agent",
+        "execution-trace-agent"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "Dinero batch ID overlap between withdrawal requests causes second finalizer to lose funds from shared batches",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Fund Loss",
+      "description": "In DineroWithdrawRequestManager._finalizeWithdrawImpl (Dinero.sol:51-68), the finalization loop iterates from initialBatchId to finalBatchId and claims ALL upxETH held by the contract for each batch: `uint256 assets = upxETH.balanceOf(address(this), i)`. When two withdrawal requests share overlapping batch IDs (e.g., request1 covers batches 5-5, request2 covers batches 5-6), whichever finalizes first claims all upxETH from batch 5. The second request finds batch 5 has 0 balance (assets==0, continue), losing its entire share of that batch. The totalWithdraw recorded for request2 only includes tokens from non-overlapping batches, but finalized=true is set, so the user receives fewer tokens than entitled while their vault shares are burned.",
+      "location": {
+        "file": "src/withdraws/Dinero.sol",
+        "lines": "51-68"
+      },
+      "recommendation": "Track per-request ownership of upxETH tokens within each batch rather than claiming all contract-held upxETH. Implement proportional batch accounting so each request can only claim its portion of shared batches.",
+      "agents_reporting": [
+        "economic-security-agent"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "claimAccountRewards(MORPHO_ADDRESS) drains all accumulated vault rewards to the Morpho contract where they are permanently locked",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Reward Theft / Fund Loss",
+      "description": "In RewardManagerMixin.claimAccountRewards (RewardManagerMixin.sol:155-177), any caller can pass any account address. When msg.sender is not a lending router, sharesHeld is set to balanceOf(account). The Morpho contract holds vault shares as collateral on behalf of all borrowers, so ERC20(vault).balanceOf(address(MORPHO)) equals the total collateral across all users. An attacker calls claimAccountRewards(address(MORPHO), 0): sharesHeld = total_collateral. Since rewardDebt for the MORPHO address is initially 0, rewardToClaim = (total_collateral * accumulatedRewardPerVaultShare / PRECISION) - 0 = all accumulated rewards. The reward tokens are transferred to address(MORPHO) via IEIP20NonStandard(rewardToken).transfer(account, rewardToClaim), permanently locking them in the Morpho contract which has no mechanism to recover arbitrary ERC20 tokens. After this call, rewardDebt[MORPHO] is set high, so it can only be done once. But one call drains the entire reward token balance, leaving actual users unable to claim any rewards.",
+      "location": {
+        "file": "src/rewards/RewardManagerMixin.sol",
+        "lines": "155-177"
+      },
+      "recommendation": "Add a check in claimAccountRewards to prevent claiming for the MORPHO address: `require(account != address(MORPHO), 'Cannot claim for Morpho')`. Alternatively, maintain a whitelist of claimable accounts or validate that account is not a system contract.",
+      "agents_reporting": [
+        "access-control-agent"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "CurveConvexLib uses asymmetric conditions for staking vs unstaking LP tokens, permanently locking funds on non-mainnet chains",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Fund Lock / Cross-chain Incompatibility",
+      "description": "In CurveConvexLib (CurveConvex2Token.sol), _stakeLpTokens (line 291) checks `CONVEX_BOOSTER != address(0)` to decide between Convex and Gauge staking, while _unstakeLpTokens (line 301) checks `CONVEX_REWARD_POOL != address(0)`. The constructor (line 137) only sets CONVEX_BOOSTER when `block.chainid == CHAIN_ID_MAINNET && CONVEX_REWARD_POOL != address(0)`. On non-mainnet chains (e.g., Arbitrum) with a non-zero convexRewardPool parameter, CONVEX_BOOSTER remains address(0) while CONVEX_REWARD_POOL is set. This causes _stakeLpTokens to stake to the Curve Gauge but _unstakeLpTokens to attempt withdrawing from the Convex Reward Pool (where no tokens exist), permanently reverting all unstaking operations and locking all deposited LP tokens.",
+      "location": {
+        "file": "src/single-sided-lp/CurveConvex2Token.sol",
+        "lines": "137-308"
+      },
+      "recommendation": "Use the same condition in both functions. Either use `CONVEX_BOOSTER != address(0)` in both, or set CONVEX_REWARD_POOL to address(0) when CONVEX_BOOSTER is not set.",
+      "agents_reporting": [
+        "periphery-agent"
+      ]
+    },
+    {
+      "id": "F-006",
+      "title": "Dinero uint16 s_batchNonce overflows after 65535 withdrawals, permanently DoS-ing all future Dinero vault withdrawals",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Denial of Service",
+      "description": "In DineroWithdrawRequestManager (Dinero.sol:10), s_batchNonce is declared as uint16 with a maximum value of 65535. In _initiateWithdrawImpl (line 32), `uint256 nonce = ++s_batchNonce` increments this counter on every withdrawal initiation. In Solidity >=0.8.0, the 65536th increment causes an arithmetic overflow panic, permanently reverting all subsequent calls to _initiateWithdrawImpl. Existing pending withdrawal requests can still be finalized, but no new withdrawals can ever be initiated. Over the lifetime of a popular vault, 65536 withdrawal initiations is achievable, making this a time-delayed permanent DoS.",
+      "location": {
+        "file": "src/withdraws/Dinero.sol",
+        "lines": "10-32"
+      },
+      "recommendation": "Change `uint16 internal s_batchNonce` to `uint256 internal s_batchNonce`. The nonce is packed into bits 240-255 of the requestId via `nonce << 240`, which only uses 16 bits, but a uint256 counter avoids the overflow while the bit-shift naturally truncates to 16 bits for the requestId encoding.",
+      "agents_reporting": [
+        "vector-scan-agent",
+        "math-precision-agent",
+        "execution-trace-agent"
+      ]
+    },
+    {
+      "id": "F-007",
+      "title": "MorphoLendingRouter.healthFactor uses floor division for borrowed amount instead of Morpho's ceiling, blocking forceWithdraw for borderline unhealthy positions",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Rounding / Logic Error",
+      "description": "In MorphoLendingRouter.healthFactor (MorphoLendingRouter.sol:279), borrowed is computed as `(position.borrowShares * market.totalBorrowAssets) / market.totalBorrowShares` using floor division without virtual shares. Morpho internally uses `toAssetsUp` with virtual shares: `ceil(shares * (totalAssets + 1) / (totalShares + VIRTUAL_SHARES))`. The router's floor-rounded `borrowed` can be 1-2 wei less than Morpho's actual debt. In forceWithdraw, the condition `if (borrowed <= maxBorrow) revert CannotForceWithdraw` prevents force-withdrawing positions that Morpho considers unhealthy but the router considers healthy due to rounding. For vaults with illiquid withdrawal queues (e.g., Dinero, Ethena), this blocks the force-withdraw → liquidate path for borderline insolvent positions.",
+      "location": {
+        "file": "src/routers/MorphoLendingRouter.sol",
+        "lines": "278-279"
+      },
+      "recommendation": "Use Morpho's rounding convention: `borrowed = mulDivUp(position.borrowShares, market.totalBorrowAssets + 1, market.totalBorrowShares + 1e6)` to match Morpho's toAssetsUp with virtual shares.",
+      "agents_reporting": [
+        "math-precision-agent"
+      ]
+    },
+    {
+      "id": "F-008",
+      "title": "Missing Chainlink oracle staleness validation in Curve2TokenOracle and PendlePTOracle allows stale prices for collateral valuation",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Oracle Staleness",
+      "description": "Both Curve2TokenOracle._calculateBaseToQuote and PendlePTOracle._calculateBaseToQuote call baseToUSDOracle.latestRoundData() but only validate `baseToUSD > 0`. They do not check `updatedAt >= block.timestamp - MAX_STALENESS` or `answeredInRound >= roundId`. During Chainlink oracle downtime or delayed updates, stale prices are returned without reversion. Since these oracles feed into the vault's convertYieldTokenToAsset() which determines price() for the Morpho lending market, stale prices can lead to undercollateralized borrowing or blocked liquidations.",
+      "location": {
+        "file": "src/oracles/Curve2TokenOracle.sol",
+        "lines": "1-76"
+      },
+      "recommendation": "Add staleness checks after latestRoundData(): `require(updatedAt >= block.timestamp - MAX_STALENESS, 'Stale oracle')` and `require(answeredInRound >= roundId, 'Incomplete round')`. Define MAX_STALENESS per oracle feed (e.g., 3600 for 1-hour heartbeat feeds).",
+      "agents_reporting": [
+        "vector-scan-agent"
+      ]
+    },
+    {
+      "id": "F-009",
+      "title": "Dinero canFinalizeWithdrawRequest condition appears inverted relative to documented intent, potentially blocking valid withdrawals",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Logic Error",
+      "description": "In DineroWithdrawRequestManager.canFinalizeWithdrawRequest (Dinero.sol:86-87), the inline comment states 'Can only finalize if the total assets are greater than the outstanding redemptions' which implies the check should be `totalAssets > outstandingRedemptions`. However, the code implements `return PirexETH.outstandingRedemptions() > totalAssets` — the logical inverse. If the comment reflects the intended behavior, the function returns true (finalizable) precisely when the protocol has INSUFFICIENT assets to cover redemptions, and returns false (not finalizable) when there ARE sufficient assets. This could either permanently block well-funded withdrawal finalization or allow premature finalization when the protocol is underfunded.",
+      "location": {
+        "file": "src/withdraws/Dinero.sol",
+        "lines": "86-87"
+      },
+      "recommendation": "Verify the intended semantics with the PirexETH protocol team. If the comment is correct, change the condition to `return totalAssets >= PirexETH.outstandingRedemptions()`.",
+      "agents_reporting": [
+        "math-precision-agent",
+        "access-control-agent",
+        "economic-security-agent",
+        "invariant-agent",
+        "periphery-agent",
+        "first-principles-agent"
+      ]
+    },
+    {
+      "id": "F-010",
+      "title": "sUSDe withdrawal request overvalued during cooldown period as oracle rate continues rising while USDe amount is fixed",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Oracle / Collateral Overvaluation",
+      "description": "In AbstractWithdrawRequestManager.getWithdrawRequestValue (AbstractWithdrawRequestManager.sol:327-331), when a withdraw request is not yet finalized, the valuation uses `TRADING_MODULE.getOraclePrice(YIELD_TOKEN, asset)` with YIELD_TOKEN=sUSDe. After a cooldown is initiated via sUSDe.cooldownShares(), the USDe redemption amount is locked in Ethena's silo at the rate at initiation time. However, the sUSDe/USDe exchange rate continues increasing. The withdrawal position is valued at the current (higher) rate rather than the locked rate, creating phantom collateral. Over a 7-day cooldown, ~0.1-0.2% yield accrual creates overvaluation that allows excess borrowing against the withdrawal request and can delay liquidation of genuinely undercollateralized positions.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "327-331"
+      },
+      "recommendation": "After cooldown initiation, value the withdrawal using the locked USDe amount (from Ethena's userCooldown.underlyingAmount) rather than the live sUSDe oracle rate.",
+      "agents_reporting": [
+        "economic-security-agent"
+      ]
+    },
+    {
+      "id": "F-011",
+      "title": "Emission-based rewards claimable by first re-entrant after all shares are escrowed due to tiny effectiveSupply denominator",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Reward Accounting",
+      "description": "In AbstractRewardManager._getAccumulatedRewardViaEmissionRate (AbstractRewardManager.sol:287-314), the emission accumulator divides by effectiveSupply. When all user shares are escrowed (pending withdrawal), effectiveSupply() = totalSupply - s_escrowedShares + VIRTUAL_SHARES = VIRTUAL_SHARES = 1e6. Emissions accumulate at rate/1e6 per unit time — orders of magnitude faster than normal. Users with escrowed shares cannot claim rewards (their _updateAccountRewards short-circuits with sharesInEscrow=true). When any user re-enters the vault (deposits), they can claim all accumulated emission rewards from the empty period with a minimal deposit, as their rewardDebt starts at 0.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "287-314"
+      },
+      "recommendation": "When effectiveSupply() equals VIRTUAL_SHARES (no real shares outstanding), skip emission accumulation or cap the accumulation rate to prevent outsized per-share rewards.",
+      "agents_reporting": [
+        "economic-security-agent"
+      ]
+    },
+    {
+      "id": "F-012",
+      "title": "Liquidator reward debt not updated when didTokenize=true due to sharesInEscrow short-circuit in updateAccountRewards",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Reward Accounting",
+      "description": "In RewardManagerMixin._postLiquidation (RewardManagerMixin.sol:55-61), the liquidator's _updateAccountRewards call passes sharesInEscrow=didTokenize. When didTokenize=true and accountSharesAfter>0, AbstractRewardManager.updateAccountRewards (line 156) short-circuits: `if (sharesInEscrow && accountSharesAfter > 0) return rewards`. The liquidator's reward debt is never updated to reflect their newly received shares. While the liquidator has an active withdraw request (from tokenization), claimAccountRewards returns early due to _isWithdrawRequestPending check. However, there may be edge cases in partial liquidation scenarios or after the withdraw request is finalized where the stale debt allows claiming unearned rewards. The sharesInEscrow flag is semantically incorrect for the liquidator since their native shares are not in escrow.",
+      "location": {
+        "file": "src/rewards/RewardManagerMixin.sol",
+        "lines": "55-61"
+      },
+      "recommendation": "In _postLiquidation, always pass sharesInEscrow=false for the liquidator's _updateAccountRewards call, since the liquidator's native balance is not in escrow — only the liquidated account's tokenized request is.",
+      "agents_reporting": [
+        "vector-scan-agent",
+        "execution-trace-agent"
+      ]
+    }
+  ],
+  "raw_output": "# Security Review — Notional Finance Leveraged Vault Strategies\n\n---\n\n## Scope\n\n|                                  |                                                        |\n| -------------------------------- | ------------------------------------------------------ |\n| **Mode**                         | ALL                                                    |\n| **Files reviewed**               | `AbstractYieldStrategy.sol` · `AbstractCustomOracle.sol` · `AbstractLPOracle.sol`<br>`Curve2TokenOracle.sol` · `PendlePTOracle.sol` · `AddressRegistry.sol`<br>`Initializable.sol` · `TimelockUpgradeableProxy.sol` · `AbstractRewardManager.sol`<br>`ConvexRewardManager.sol` · `RewardManagerMixin.sol` · `AbstractLendingRouter.sol`<br>`MorphoLendingRouter.sol` · `AbstractSingleSidedLP.sol` · `CurveConvex2Token.sol`<br>`AbstractStakingStrategy.sol` · `PendlePTLib.sol` · `PendlePT.sol`<br>`PendlePT_sUSDe.sol` · `StakingStrategy.sol` · `Constants.sol`<br>`TokenUtils.sol` · `TypeConvert.sol` · `AbstractWithdrawRequestManager.sol`<br>`ClonedCooldownHolder.sol` · `Dinero.sol` · `Ethena.sol`<br>`EtherFi.sol` · `GenericERC20.sol` · `GenericERC4626.sol` · `Origin.sol` |\n| **Confidence threshold (1-100)** | 80                                                     |\n\n---\n\n## Findings\n\n[90] **1. Zero exit balance during LP withdrawal causes permanent position lock via division-by-zero**\n\n`BaseLPLib.finalizeAndRedeemWithdrawRequest` · Confidence: 90 · [agents: 4]\n\n**Description**\nWhen a heavily skewed Curve pool yields exitBalances[i]==0 for one token during initiateWithdraw, no WithdrawRequest is created for that token, but finalizeAndRedeemWithdrawRequest unconditionally divides by w.sharesAmount (zero), causing a permanent panic revert that locks the user's escrowed shares and blocks all exit paths including liquidation.\n\n**Fix**\n```diff\n- uint256 yieldTokensBurned = uint256(w.yieldTokenAmount) * sharesToRedeem / w.sharesAmount;\n+ if (w.requestId == 0) { exitBalances[i] = 0; withdrawTokens[i] = ERC20(manager.WITHDRAW_TOKEN()); continue; }\n+ uint256 yieldTokensBurned = uint256(w.yieldTokenAmount) * sharesToRedeem / w.sharesAmount;\n```\n---\n\n[90] **2. Ethena cooldownDuration=0 causes permanent fund loss**\n\n`EthenaCooldownHolder._finalizeCooldown` · Confidence: 90 · [agents: 2]\n\n**Description**\nWhen sUSDe.cooldownDuration()==0, _startCooldown redeems sUSDe to USDe in the holder immediately, but _finalizeCooldown measures a before/after balance delta that sees no new USDe and returns (0, true), permanently stranding all user funds in the clone.\n\n**Fix**\n```diff\n  function _finalizeCooldown() internal override returns (uint256 tokensClaimed, bool finalized) {\n      uint24 duration = sUSDe.cooldownDuration();\n      IsUSDe.UserCooldown memory userCooldown = sUSDe.cooldowns(address(this));\n      if (block.timestamp < userCooldown.cooldownEnd && 0 < duration) {\n          return (0, false);\n      }\n-     uint256 balanceBefore = USDe.balanceOf(address(this));\n-     if (0 < userCooldown.cooldownEnd) sUSDe.unstake(address(this));\n-     uint256 balanceAfter = USDe.balanceOf(address(this));\n-     tokensClaimed = balanceAfter - balanceBefore;\n+     if (0 < userCooldown.cooldownEnd) {\n+         uint256 balanceBefore = USDe.balanceOf(address(this));\n+         sUSDe.unstake(address(this));\n+         tokensClaimed = USDe.balanceOf(address(this)) - balanceBefore;\n+     } else {\n+         tokensClaimed = USDe.balanceOf(address(this));\n+     }\n      USDe.transfer(manager, tokensClaimed);\n      finalized = true;\n  }\n```\n---\n\n[90] **3. Dinero batch ID overlap causes fund loss for second finalizer**\n\n`DineroWithdrawRequestManager._finalizeWithdrawImpl` · Confidence: 90 · [agents: 1]\n\n**Description**\nTwo withdrawal requests sharing overlapping PirexETH batch IDs both iterate the same batch range; the first finalizer claims all upxETH from shared batches, leaving the second with zero tokens for those batches while marking finalization as successful and burning their shares.\n\n**Fix**\n```diff\n- uint256 assets = upxETH.balanceOf(address(this), i);\n+ // Track per-request ownership of upxETH tokens rather than claiming entire contract balance\n```\n---\n\n[90] **4. claimAccountRewards(MORPHO) drains all accumulated vault rewards**\n\n`RewardManagerMixin.claimAccountRewards` · Confidence: 90 · [agents: 1]\n\n**Description**\nAny caller can invoke claimAccountRewards(address(MORPHO), 0); since MORPHO holds all vault shares as collateral, balanceOf(MORPHO)=total_collateral, and rewardDebt for MORPHO is 0, causing all accumulated rewards to be transferred to the Morpho contract where they are permanently locked.\n\n**Fix**\n```diff\n  function claimAccountRewards(address account, uint256 sharesHeld) external nonReentrant returns (uint256[] memory rewards) {\n+     require(account != address(MORPHO), \"Cannot claim for Morpho\");\n      uint256 effectiveSupplyBefore = effectiveSupply();\n```\n---\n\n[90] **5. CurveConvexLib stake/unstake asymmetry locks LP tokens on non-mainnet**\n\n`CurveConvexLib._stakeLpTokens/_unstakeLpTokens` · Confidence: 90 · [agents: 1]\n\n**Description**\n_stakeLpTokens checks CONVEX_BOOSTER!=address(0) while _unstakeLpTokens checks CONVEX_REWARD_POOL!=address(0); on non-mainnet chains CONVEX_BOOSTER is address(0) but CONVEX_REWARD_POOL is set, causing tokens to be staked in Gauge but unstaking attempts Convex withdrawal (zero balance), permanently locking funds.\n\n**Fix**\n```diff\n  function _unstakeLpTokens(uint256 poolClaim) internal {\n-     if (CONVEX_REWARD_POOL != address(0)) {\n+     if (CONVEX_BOOSTER != address(0)) {\n          bool success = IConvexRewardPool(CONVEX_REWARD_POOL).withdrawAndUnwrap(poolClaim, false);\n```\n---\n\n[90] **6. Dinero uint16 s_batchNonce overflows after 65535 withdrawals**\n\n`DineroWithdrawRequestManager._initiateWithdrawImpl` · Confidence: 90 · [agents: 3]\n\n**Description**\ns_batchNonce is uint16 (max 65535); in Solidity >=0.8 the 65536th ++s_batchNonce causes an arithmetic overflow panic, permanently preventing all future Dinero withdrawal initiations.\n\n**Fix**\n```diff\n- uint16 internal s_batchNonce;\n+ uint256 internal s_batchNonce;\n```\n---\n\n[85] **7. healthFactor floor-division rounding blocks forceWithdraw for borderline positions**\n\n`MorphoLendingRouter.healthFactor` · Confidence: 85 · [agents: 1]\n\n**Description**\nhealthFactor computes borrowed with floor division without virtual shares, while Morpho uses toAssetsUp with virtual shares; the 1-2 wei underestimate causes forceWithdraw to revert for positions that Morpho considers liquidatable.\n\n**Fix**\n```diff\n- borrowed = (uint256(position.borrowShares) * uint256(market.totalBorrowAssets)) / uint256(market.totalBorrowShares);\n+ borrowed = position.borrowShares > 0 ? ((uint256(position.borrowShares) * (uint256(market.totalBorrowAssets) + 1) + uint256(market.totalBorrowShares) + 1e6 - 1) / (uint256(market.totalBorrowShares) + 1e6)) : 0;\n```\n---\n\n[85] **8. Missing Chainlink oracle staleness validation**\n\n`Curve2TokenOracle._calculateBaseToQuote` · Confidence: 85 · [agents: 1]\n\n**Description**\nBoth Curve2TokenOracle and PendlePTOracle call latestRoundData() but only validate baseToUSD > 0, missing updatedAt staleness and answeredInRound checks, allowing stale prices to be used for collateral valuation in the Morpho lending market.\n\n**Fix**\n```diff\n  (roundId, baseToUSD, startedAt, updatedAt, answeredInRound) = baseToUSDOracle.latestRoundData();\n  require(baseToUSD > 0, \"Chainlink Rate Error\");\n+ require(updatedAt >= block.timestamp - MAX_STALENESS, \"Stale oracle\");\n+ require(answeredInRound >= roundId, \"Incomplete round\");\n```\n---\n\n[80] **9. Dinero canFinalizeWithdrawRequest condition inverted relative to documented intent**\n\n`DineroWithdrawRequestManager.canFinalizeWithdrawRequest` · Confidence: 80 · [agents: 6]\n\n**Description**\nThe inline comment states 'Can only finalize if the total assets are greater than the outstanding redemptions' but the code implements `return PirexETH.outstandingRedemptions() > totalAssets` — the logical inverse — potentially blocking valid withdrawals or allowing premature finalization.\n\n**Fix**\n```diff\n- return PirexETH.outstandingRedemptions() > totalAssets;\n+ return totalAssets >= PirexETH.outstandingRedemptions();\n```\n---\n\n[75] **10. sUSDe withdrawal request overvalued during cooldown period**\n\n`AbstractWithdrawRequestManager.getWithdrawRequestValue` · Confidence: 75\n\n**Description**\nAfter initiating an sUSDe cooldown, the locked USDe amount is fixed at initiation time, but getWithdrawRequestValue continues using the live (rising) sUSDe oracle rate, creating phantom collateral that can delay liquidation during the cooldown period.\n\n---\n\n[75] **11. Emission rewards accumulate at inflated rate when all shares are escrowed**\n\n`AbstractRewardManager._getAccumulatedRewardViaEmissionRate` · Confidence: 75\n\n**Description**\nWhen all user shares are escrowed, effectiveSupply() drops to VIRTUAL_SHARES (1e6), causing emission rewards to accumulate at a vastly inflated per-share rate; the first re-entrant after the escrow period can claim all accumulated emissions with a minimal deposit.\n\n---\n\n[75] **12. Liquidator reward debt not updated when didTokenize=true**\n\n`RewardManagerMixin._postLiquidation` · Confidence: 75\n\n**Description**\nThe liquidator's _updateAccountRewards passes sharesInEscrow=didTokenize, causing the short-circuit `if (sharesInEscrow && accountSharesAfter > 0) return` to skip reward debt updates; while guards prevent immediate exploitation, the semantically incorrect flag creates accounting risk in edge cases.\n\n---\n\nFindings List\n\n| # | Confidence | Title |\n|---|---|---|\n| 1 | [90] | Zero exit balance during LP withdrawal causes permanent position lock |\n| 2 | [90] | Ethena cooldownDuration=0 causes permanent fund loss |\n| 3 | [90] | Dinero batch ID overlap causes fund loss for second finalizer |\n| 4 | [90] | claimAccountRewards(MORPHO) drains all accumulated vault rewards |\n| 5 | [90] | CurveConvexLib stake/unstake asymmetry locks LP tokens on non-mainnet |\n| 6 | [90] | Dinero uint16 s_batchNonce overflows after 65535 withdrawals |\n| 7 | [85] | healthFactor floor-division rounding blocks forceWithdraw |\n| 8 | [85] | Missing Chainlink oracle staleness validation |\n| 9 | [80] | Dinero canFinalizeWithdrawRequest condition inverted |\n| 10 | [75] | sUSDe withdrawal request overvalued during cooldown |\n| 11 | [75] | Emission rewards accumulate at inflated rate when all escrowed |\n| 12 | [75] | Liquidator reward debt not updated when didTokenize |\n\n---\n\n## Leads\n\n_Vulnerability trails with concrete code smells where the full exploit path could not be completed in one analysis pass._\n\n- **Oracle price manipulation via yieldToken donation** — `AbstractYieldStrategy.price` — Code smells: _yieldTokenBalance() reads live ERC20 balance, donation inflates per-share value — For staking strategies (not LP), direct token donation is possible but profit extraction depends on the vault state and is bounded by VIRTUAL_SHARES/VIRTUAL_YIELD_TOKENS guards\n- **User-controlled tradeType in deposit/redemption trades** — `AbstractSingleSidedLP._executeDepositTrades` — Code smells: t.tradeType passed from user calldata to Trade struct without validation — Flipping from EXACT_IN to EXACT_OUT reinterprets the amount field; exploitability depends on TradingModule validation (out of scope)\n- **deadline: block.timestamp provides no MEV protection** — `AbstractSingleSidedLP._executeDepositTrades` — Code smells: `deadline: block.timestamp` always passes at inclusion time — Transactions held in mempool execute with no staleness protection\n- **Unauthenticated price(address) temporarily modifies t_CurrentAccount** — `AbstractYieldStrategy.price` — Code smells: external non-view function sets transient state without access control — Save/restore pattern prevents persistent corruption but mid-transaction reentrancy could theoretically read incorrect valuation\n\n---\n\n> This review was performed by an AI assistant. AI analysis can never verify the complete absence of vulnerabilities and no guarantee of security is given. Team security reviews, bug bounty programs, and on-chain monitoring are strongly recommended."
+}

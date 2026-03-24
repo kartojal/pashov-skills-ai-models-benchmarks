@@ -10,7 +10,7 @@ function loadReportsPlugin() {
 
   function loadReports() {
     const reportsDir = resolve(__dirname, "../reports");
-    const runId = process.env.REPORT_ID || "run-1";
+    const runId = process.env.REPORT_ID || "run-2";
     const targets: Record<string, any[]> = {};
 
     try {

@@ -36,21 +36,19 @@ Each runner invokes its harness CLI directly (no orchestrator needed).
 ### Run All Benchmarks
 
 ```bash
-# Run all model+harness combinations against notional-finance
-./run-all.sh notional-finance
-
-# Run in parallel
-./run-all.sh notional-finance --parallel
-
 # Run a single benchmark
 ./run-all.sh notional-finance --only claude-code-opus-4.6
 
 # Tag a run (reports go into reports/notional-finance/run-1/)
-./run-all.sh notional-finance --run-id run-1
+./run-all.sh notional-finance --run-id run-3
 
 # Run a single runner directly
 ./ai-runners/claude-code-opus-4.6.sh notional-finance
-./ai-runners/claude-code-opus-4.6.sh notional-finance run-1  # with run ID
+./ai-runners/claude-code-opus-4.6.sh notional-finance run-3  # with run ID
+
+NOTE: For opencode, you need to run manually and pass the master prompt via doing a dry-run, due there is pemissions that must be enabled manually and can not be bypassed by opencode.json config.
+
+./run-all.sh notional-finance --only opencode-qwen3.5-plus --dry-run
 ```
 
 ### View Dashboard

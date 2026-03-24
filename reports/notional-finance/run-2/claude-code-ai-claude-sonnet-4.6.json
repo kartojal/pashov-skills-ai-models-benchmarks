@@ -1,0 +1,245 @@
+{
+  "metadata": {
+    "model": "claude-sonnet-4.6",
+    "harness": "claude-code",
+    "target": "notional-finance",
+    "timestamp": "2026-03-24T16:21:29Z",
+    "duration_seconds": 1527,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 13,
+    "critical": 0,
+    "high": 9,
+    "medium": 4,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Dinero canFinalizeWithdrawRequest Condition Inverted — All Normal Withdrawals Permanently Blocked",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Logic Error",
+      "description": "In DineroWithdrawRequestManager.canFinalizeWithdrawRequest(), the final condition is `return PirexETH.outstandingRedemptions() > totalAssets`. The inline comment directly above states: 'Can only finalize if the total assets are greater than the outstanding redemptions', which requires `totalAssets >= outstandingRedemptions`. The implemented condition is the exact opposite: it returns `true` (can finalize) precisely when outstanding redemptions EXCEED available assets (the protocol is under-funded), and returns `false` (blocks finalization) when assets are sufficient. In the normal happy path where `outstandingRedemptions = 0` and `totalAssets > 0`, the function returns `false`, permanently blocking all Dinero strategy withdrawal completions. This affects every user who has initiated a Dinero/PirexETH-backed withdrawal — none of them can ever finalize and redeem their funds.",
+      "location": {
+        "file": "src/withdraws/Dinero.sol",
+        "lines": "85-90"
+      },
+      "recommendation": "Invert the comparison: change `return PirexETH.outstandingRedemptions() > totalAssets` to `return totalAssets >= PirexETH.outstandingRedemptions()`. Verify the exact Pirex protocol semantics (e.g., whether the check should be against the per-request amount or the global outstanding figure) before deploying the fix.",
+      "agents_reporting": [
+        "vector-scan-agent",
+        "math-precision-agent",
+        "access-control-agent",
+        "economic-security-agent",
+        "execution-trace-agent",
+        "invariant-agent",
+        "periphery-agent",
+        "first-principles-agent"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "Stale In-Memory VaultRewardState Causes Claim Rewards to Be Overwritten by Emission Accumulation",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Reward Accounting",
+      "description": "In AbstractRewardManager.updateAccountRewards(), the function loads `VaultRewardState[] memory state = _getVaultRewardStateSlot()`, capturing a snapshot at accumulator value A. It then calls `_claimVaultRewards(effectiveSupplyBefore, state)`, which internally calls `_accumulateSecondaryRewardViaClaim(i, state[i], ...)` — this updates STORAGE to A + claimIncrement, but the outer `state` memory array is NOT updated (Solidity struct-in-array passes by value). The function then calls `_accumulateSecondaryRewardViaEmissionRate(i, state[i], ...)` using the STALE memory value `state[i].accumulatedRewardPerVaultShare = A`. This function computes `A + emission` and writes it to storage, OVERWRITING the previously stored `A + claimIncrement`. The storage now contains `A + emission` instead of `A + claimIncrement + emission`. Finally, `_claimRewardToken` is called with `state[i].accumulatedRewardPerVaultShare = A` (stale), computing user rewards based on the pre-update accumulator. Users who interact during any epoch where a vault has BOTH emission-rate rewards AND external claim-based rewards will permanently lose the claim increment for that epoch. There is no recovery: the overwritten accumulator delta is gone.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "140-185"
+      },
+      "recommendation": "After `_claimVaultRewards` returns, reload `state[i]` from storage before calling `_accumulateSecondaryRewardViaEmissionRate` and `_claimRewardToken`. Alternatively, restructure the accumulation so all storage writes are visible to the per-account claim computation: `state[i] = _getVaultRewardStateSlot()[i]` after each accumulation step.",
+      "agents_reporting": [
+        "invariant-agent",
+        "periphery-agent",
+        "first-principles-agent"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "Ethena cooldownDuration=0: USDe Claimed at Initiation Makes Finalization Return tokensClaimed=0, Locking All Funds",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Withdraw Flow Logic Error",
+      "description": "When Ethena's sUSDe.cooldownDuration() == 0, calling sUSDe.cooldownAssets() (or cooldownShares()) during _initiateWithdrawImpl immediately burns sUSDe and deposits USDe into the EthenaCooldownHolder — there is no delayed cooldown. However, the finalization logic in _finalizeWithdrawImpl uses a balance-diff pattern: it snapshots `balanceBefore = USDe.balanceOf(address(this))`, calls `sUSDe.unstake(address(this))` (which does nothing because the cooldown was already completed at initiation), then computes `tokensClaimed = balanceAfter - balanceBefore`. Since no new tokens arrived during finalization, `tokensClaimed = 0`. The vault then records 0 tokens redeemed for the user. The USDe already sitting in the cooldown holder is never transferred out to the user — it is permanently stranded. Any future Ethena governance decision to set cooldownDuration=0 (for instant redemptions) will brick all concurrent and future Dinero-style withdrawals.",
+      "location": {
+        "file": "src/withdraws/Ethena.sol",
+        "lines": "25-55"
+      },
+      "recommendation": "In `_finalizeWithdrawImpl`, check if `balanceBefore > 0` before calling `unstake` — if USDe is already present, use the existing balance as `tokensClaimed`. Alternatively, track the amount deposited during initiation in storage and use that value directly during finalization when cooldownDuration was 0 at the time of initiation.",
+      "agents_reporting": [
+        "economic-security-agent"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "LP Exit Zero-Balance Token Omits Withdraw Request Manager Creation, Permanently Bricking getWithdrawRequestValue",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Withdraw Flow Logic Error",
+      "description": "In AbstractSingleSidedLP._initiateWithdraw(), after calling `remove_liquidity()` on the Curve pool, the function iterates over `exitBalances[i]` and only calls `withdrawRequestManagers[i].initiateWithdraw(exitBalances[i])` when `exitBalances[i] > 0`. When a pool is sufficiently imbalanced, one token's proportional share rounds to zero and no WithdrawRequestManager is created for that token index. Subsequently, `getWithdrawRequestValue()` calls `require(hasRequest)` for every token in the pool — if any token lacks a request, the entire function reverts. This means `convertToAssets()` reverts for that account, which means `price(borrower)` reverts when called by Morpho during health factor evaluation, which means the account is unliquidatable. The user's position becomes frozen: they cannot exit (withdraw request is partially invalid), cannot be liquidated (price() reverts), and their debt continues to accrue interest indefinitely.",
+      "location": {
+        "file": "src/single-sided-lp/AbstractSingleSidedLP.sol",
+        "lines": "150-190"
+      },
+      "recommendation": "When `exitBalances[i] == 0`, either (a) create a sentinel WithdrawRequest with zero amount so `hasRequest` passes, or (b) track which token indices have requests and skip missing ones in `getWithdrawRequestValue` rather than requiring all. Option (b) requires ensuring the valuation correctly reflects only the tokens that were actually withdrawn.",
+      "agents_reporting": [
+        "economic-security-agent",
+        "periphery-agent"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "forceWithdraw Has No Access Control and Passes Attacker-Controlled Data to LP Exit, Enabling Sandwich Attack",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Access Control / MEV",
+      "description": "AbstractLendingRouter.forceWithdraw() has no `isAuthorized(onBehalf, vault)` check — any address can call it for any account that is unhealthy (borrowed > maxBorrow). The `data` parameter is passed directly to `vault.initiateWithdraw(account, sharesHeld, data)` which decodes it into WithdrawParams including `minAmounts[]` for the LP exit. An attacker calls `forceWithdraw(victim, curveVault, abi.encode({minAmounts: [0, 0], ...}))`, setting zero slippage protection. The vault then calls `_unstakeAndExitPool(poolClaim, [0,0], false)`, which removes liquidity from the Curve pool with no minimum output check. The attacker sandwiches this transaction: (1) manipulate the Curve pool before the LP exit, (2) let the victim's exit execute at the skewed price, (3) arbitrage the pool back. The victim receives significantly fewer tokens than fair value. The attack profit comes directly from the victim's collateral.",
+      "location": {
+        "file": "src/routers/AbstractLendingRouter.sol",
+        "lines": "195-220"
+      },
+      "recommendation": "Either (a) add `isAuthorized(onBehalf, vault)` to `forceWithdraw` so only the account owner or authorized keeper can trigger it, or (b) compute minimum acceptable amounts from on-chain oracle prices inside the vault's `_initiateWithdraw` and override any user-supplied zero amounts with oracle-derived floors.",
+      "agents_reporting": [
+        "access-control-agent",
+        "economic-security-agent",
+        "execution-trace-agent"
+      ]
+    },
+    {
+      "id": "F-006",
+      "title": "Chainlink latestRoundData Missing Staleness Check in Curve2TokenOracle and PendlePTOracle",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Oracle Security",
+      "description": "Both Curve2TokenOracle._calculateBaseToQuote() and PendlePTOracle._calculateBaseToQuote() call Chainlink's `latestRoundData()` and only validate `require(answer > 0, 'Chainlink Rate Error')`. There is no check on `updatedAt` (staleness), `answeredInRound >= roundId` (round completeness), or any maximum age window. A Chainlink price feed can go stale during network congestion, oracle node outages, or market circuit-breaker events. During staleness, the oracle continues returning the last known price, which may be significantly off-market. Since these oracles feed directly into the Curve LP token and Pendle PT pricing used as Morpho collateral, a stale price can cause Morpho to: (a) allow excess borrowing against inflated collateral values, or (b) trigger spurious liquidations when the price is stale in the wrong direction.",
+      "location": {
+        "file": "src/oracles/Curve2TokenOracle.sol",
+        "lines": "40-70"
+      },
+      "recommendation": "After each `latestRoundData()` call, add: `require(updatedAt >= block.timestamp - MAX_STALENESS && answeredInRound >= roundId, 'Stale oracle');` where `MAX_STALENESS` is a deployment-configured parameter appropriate for the feed's heartbeat interval (e.g., 3600 for hourly feeds, 86400 for daily).",
+      "agents_reporting": [
+        "vector-scan-agent"
+      ]
+    },
+    {
+      "id": "F-007",
+      "title": "Strict Equality Check in finalizeAndRedeemWithdrawRequest Permanently Bricks Full Redemption After Partial Liquidation",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "Withdraw Flow Logic Error",
+      "description": "In AbstractWithdrawRequestManager.finalizeAndRedeemWithdrawRequest(), the full-redemption branch contains `require(s_withdraw.yieldTokenAmount == withdrawYieldTokenAmount)`. The `withdrawYieldTokenAmount` is computed in AbstractStakingStrategy._redeemShares() as `uint256(w.yieldTokenAmount) * sharesToRedeem / w.sharesAmount`. If, after a partial liquidation via tokenizeWithdrawRequest, the stored `s_withdraw.sharesAmount` has been decremented but a Morpho rounding difference causes `sharesToRedeem` (from `balanceOfCollateral`) to differ from the stored `sharesAmount` by even 1 wei, the division produces a `withdrawYieldTokenAmount` that does not equal `s_withdraw.yieldTokenAmount` exactly, and the transaction reverts. The account is now permanently locked: the strict equality check will never pass because the rounding delta is deterministic and irreversible. Users affected by this cannot exit their position and cannot be liquidated (since `burnShares` also triggers this path).",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "125-145"
+      },
+      "recommendation": "Replace the strict equality with a tolerance check or cap: if `withdrawYieldTokenAmount >= s_withdraw.yieldTokenAmount`, treat it as a full redemption and use `s_withdraw.yieldTokenAmount` directly. This prevents rounding-induced mismatches while preserving the invariant that no account over-redeems.",
+      "agents_reporting": [
+        "invariant-agent",
+        "first-principles-agent"
+      ]
+    },
+    {
+      "id": "F-008",
+      "title": "price() Hardcoded 10^(36-24) Scale Factor Produces 1e12-Too-Small Oracle Price for 6-Decimal Asset Vaults",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "Oracle / Price Calculation",
+      "description": "AbstractYieldStrategy.price() returns `convertToAssets(SHARE_PRECISION) * (10 ** (36 - 24))` where SHARE_PRECISION = 1e24 and the scale factor is hardcoded as `10^12`. For 18-decimal assets (WETH, wstETH), `convertToAssets(1e24)` returns ~1e18 at par, so price = 1e18 * 1e12 = 1e30... adjusted for actual formula this yields the correct Morpho 1e36 oracle denomination. However, for 6-decimal assets (USDC, USDT), `convertToAssets(1e24)` returns ~1e6 at par (USDC has 6 decimals), so price = 1e6 * 1e12 = 1e18. Morpho's health check computes `maxBorrow = collateral * price / 1e36 = shares * 1e18 / 1e36 = shares * 1e-18 ≈ 0`. All positions in any vault backed by a 6-decimal asset token will have near-zero borrowing capacity regardless of how much collateral they deposit, making the vault non-functional for USDC/USDT strategies. The correct scale factor for 6-decimal assets should be `10^(36 - 6) = 10^30`.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "85-110"
+      },
+      "recommendation": "Replace the hardcoded `(36 - 24)` with `(36 - ASSET_PRECISION)` where `ASSET_PRECISION = ERC20(asset).decimals()`, captured during initialization. Verify the SHARE_PRECISION constant is also appropriately scaled relative to the asset precision.",
+      "agents_reporting": [
+        "math-precision-agent"
+      ]
+    },
+    {
+      "id": "F-009",
+      "title": "Oracle Revert in getWithdrawRequestValue Blocks Health Factor Computation, Making Insolvent Positions Immune to Liquidation",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "Denial of Service / Liquidation Safety",
+      "description": "In AbstractSingleSidedLP.getWithdrawRequestValue(), computing the value of a pending withdrawal requires calling TRADING_MODULE.getOraclePrice() for each LP token. If any oracle reverts (Chainlink circuit breaker, staleness revert if guardian is added, or sequencer downtime on Arbitrum), the entire `getWithdrawRequestValue()` call reverts. This propagates up through `convertToAssets()` → `price(borrower)` → `healthFactor()`. Any account with a pending withdraw request becomes unliquidatable for the duration of the oracle failure. During this window, the account's debt accrues interest and could accumulate bad debt that is socialized across all Morpho suppliers. On Arbitrum, L2 sequencer downtime is an additional vector — without a sequencer uptime check, even a healthy-seeming price feed is effectively stale during downtime. Combined with F-004, multiple independent mechanisms can make positions permanently unliquidatable (Chain: F-004 + F-009).",
+      "location": {
+        "file": "src/single-sided-lp/AbstractSingleSidedLP.sol",
+        "lines": "200-240"
+      },
+      "recommendation": "Wrap oracle calls in `getWithdrawRequestValue` with try/catch. On oracle failure, return a conservative (minimum) valuation rather than reverting — e.g., return the last known good price or zero. This ensures liquidations can always proceed even during oracle disruptions.",
+      "agents_reporting": [
+        "economic-security-agent"
+      ]
+    },
+    {
+      "id": "F-010",
+      "title": "Dinero uint16 s_batchNonce Overflows at 65536 Withdrawal Initiations, Permanently Bricking All Future Withdrawals",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Integer Overflow / Denial of Service",
+      "description": "DineroWithdrawRequestManager stores `uint16 private s_batchNonce` which increments on every call to `_initiateWithdrawImpl()`. Solidity 0.8+ checked arithmetic causes `++s_batchNonce` to revert (via panic 0x11) when the value reaches 65535 and wraps to 65536. After this overflow, every subsequent call to `initiateWithdraw()` reverts with an arithmetic overflow panic, permanently preventing any new withdrawal requests from being initiated in the Dinero strategy. All users who try to exit their position via a withdrawal request after this threshold are indefinitely blocked. The vault cannot be upgraded to fix this without a full migration because the state variable is in immutable storage. Even at moderate adoption (e.g., a popular vault with daily withdrawals), 65535 can be reached within months to years.",
+      "location": {
+        "file": "src/withdraws/Dinero.sol",
+        "lines": "30-60"
+      },
+      "recommendation": "Change `uint16 private s_batchNonce` to `uint256 private s_batchNonce`. If the batch nonce is packed into the requestId encoding, update the bitfield layout accordingly. Alternatively, if `uint16` is required for external protocol compatibility, add a check that reverts with a meaningful error before overflow rather than a panic, and plan a migration path.",
+      "agents_reporting": [
+        "vector-scan-agent"
+      ]
+    },
+    {
+      "id": "F-011",
+      "title": "tokenizeWithdrawRequest Integer Truncation Assigns Zero yieldTokenAmount to Liquidator for Small Share Amounts",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Rounding / Economic Precision",
+      "description": "In AbstractWithdrawRequestManager.tokenizeWithdrawRequest(), the liquidator's proportional yield token allocation is computed as `yieldTokenAmount = s_withdraw.yieldTokenAmount * sharesAmount / s_withdraw.sharesAmount`. When `sharesAmount` is small relative to `s_withdraw.sharesAmount` — specifically when `s_withdraw.yieldTokenAmount * sharesAmount < s_withdraw.sharesAmount` — the division truncates to zero. The liquidator's WithdrawRequest is created with `yieldTokenAmount = 0`. When the liquidator later calls `finalizeAndRedeemWithdrawRequest`, they receive `totalWithdraw * 0 / totalYieldTokenAmount = 0` tokens despite holding shares. The liquidated account retains a slightly over-proportional claim on the yield tokens. An attacker can exploit this iteratively via self-liquidation with 1-share amounts, each time getting `yieldTokenAmount = 0` while retaining the proportional token claim, inflating their own yieldToken:shares ratio.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "165-195"
+      },
+      "recommendation": "Add `require(yieldTokenAmount > 0, 'TooSmallToTokenize')` to prevent zero-value tokenizations. Additionally, consider using ceiling division for the liquidator's allocation to avoid systematic rounding in the attacker's favor.",
+      "agents_reporting": [
+        "vector-scan-agent",
+        "economic-security-agent"
+      ]
+    },
+    {
+      "id": "F-012",
+      "title": "Partial Redemption Double-Scaling Truncation Permanently Strands Yield Tokens in WithdrawRequestManager",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Rounding / Precision Loss",
+      "description": "In AbstractWithdrawRequestManager.finalizeAndRedeemWithdrawRequest(), for partial redemptions the code first computes `tokensWithdrawn` as the pro-rata share of the finalized batch (`s.totalWithdraw * w.yieldTokenAmount / s.totalYieldTokenAmount`), then applies a second scaling for the partial burn: `tokensWithdrawn = tokensWithdrawn * withdrawYieldTokenAmount / s_withdraw.yieldTokenAmount`. Each division truncates downward. Over multiple partial redemptions, the accumulated rounding dust remains locked in the manager contract and is never returned to any party. `s.totalWithdraw` is never decremented in storage on partial redemptions — only `s_withdraw.yieldTokenAmount` is tracked. This means the rounding loss is unrecoverable. For high-decimal tokens with large balances, the stranded amount per redemption is small but compounds across many users.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "115-145"
+      },
+      "recommendation": "On the final partial burn (when `withdrawYieldTokenAmount == s_withdraw.yieldTokenAmount` after decrement), use the remaining stored `s.totalWithdraw * lastYieldTokenFraction` and add any accumulated dust to the final redemption rather than truncating. Track a running `claimedTokens` counter per request to reconcile.",
+      "agents_reporting": [
+        "economic-security-agent",
+        "periphery-agent"
+      ]
+    },
+    {
+      "id": "F-013",
+      "title": "Transfer Authorization Consumed by Partial-Amount Transfer, Enabling Griefing of In-Flight Liquidations",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Access Control / Griefing",
+      "description": "AbstractYieldStrategy._update() checks `if (t_AllowTransfer_Amount < value) revert Unauthorized()` — a strict less-than comparison that allows any `value <= t_AllowTransfer_Amount` to pass. After a passing transfer, both `t_AllowTransfer_To` and `t_AllowTransfer_Amount` are deleted regardless of whether the full authorized amount was transferred. During a liquidation, `preLiquidation()` sets `t_AllowTransfer_To = lendingRouter` and `t_AllowTransfer_Amount = sharesToLiquidate`. If an attacker who holds vault shares calls `ERC20.transfer(lendingRouter, 1)` in the same block (between the authorization and the liquidation transfer), the 1-share transfer passes the check (1 < sharesToLiquidate), clears the authorization, and the subsequent authorized transfer of `sharesToLiquidate` fails with Unauthorized(). The liquidation transaction reverts. The attacker pays the cost of 1 wei share transfer; the victim's liquidation is delayed. The attacker needs to own vault shares and precisely front-run the liquidation transaction.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "330-345"
+      },
+      "recommendation": "Change `t_AllowTransfer_Amount < value` to `t_AllowTransfer_Amount != value` to enforce exact-amount authorization. Also add a `from` address check in `_update` to ensure only the expected sender can consume the authorization, preventing third-party consumption.",
+      "agents_reporting": [
+        "access-control-agent",
+        "periphery-agent"
+      ]
+    }
+  ],
+  "raw_output": "# Security Review — Notional Finance Leveraged Vault Strategies\n\n---\n\n## Scope\n\n| | |\n|---|---|\n| **Mode** | ALL (default) |\n| **Files reviewed** | `AbstractYieldStrategy.sol` · `AbstractCustomOracle.sol` · `AbstractLPOracle.sol`<br>`Curve2TokenOracle.sol` · `PendlePTOracle.sol` · `AddressRegistry.sol`<br>`Initializable.sol` · `TimelockUpgradeableProxy.sol` · `AbstractRewardManager.sol`<br>`ConvexRewardManager.sol` · `RewardManagerMixin.sol` · `AbstractLendingRouter.sol`<br>`MorphoLendingRouter.sol` · `AbstractSingleSidedLP.sol` · `CurveConvex2Token.sol`<br>`AbstractStakingStrategy.sol` · `PendlePTLib.sol` · `PendlePT.sol`<br>`PendlePT_sUSDe.sol` · `StakingStrategy.sol` · `Constants.sol`<br>`TokenUtils.sol` · `TypeConvert.sol` · `AbstractWithdrawRequestManager.sol`<br>`ClonedCooldownHolder.sol` · `Dinero.sol` · `Ethena.sol`<br>`EtherFi.sol` · `GenericERC20.sol` · `GenericERC4626.sol` · `Origin.sol` |\n| **Confidence threshold (1-100)** | 65 |\n\n---\n\n## Findings\n\n[90] **1. Dinero canFinalizeWithdrawRequest Condition Inverted — All Normal Withdrawals Permanently Blocked**\n\n`DineroWithdrawRequestManager.canFinalizeWithdrawRequest` · Confidence: 90 · [agents: 8]\n\n**Description**\nThe condition `return PirexETH.outstandingRedemptions() > totalAssets` is inverted relative to its inline comment 'total assets greater than outstanding redemptions', permanently blocking finalization when assets are sufficient and allowing it only when the system is under-funded.\n\n**Fix**\n\n```diff\n- return PirexETH.outstandingRedemptions() > totalAssets;\n+ return totalAssets >= PirexETH.outstandingRedemptions();\n```\n\n---\n\n[85] **2. Stale In-Memory VaultRewardState Causes Claim Rewards to Be Overwritten by Emission Accumulation**\n\n`AbstractRewardManager.updateAccountRewards` · Confidence: 85 · [agents: 3]\n\n**Description**\n`_claimVaultRewards` updates storage (A → A+claimIncrement) but not the local `state` memory copy; then `_accumulateSecondaryRewardViaEmissionRate` reads stale base A and writes A+emission, overwriting A+claimIncrement; `_claimRewardToken` then uses A (fully stale) — users permanently lose the claim-epoch reward increment for any vault with both emission-rate and claim-based rewards.\n\n**Fix**\n\n```diff\n  _claimVaultRewards(effectiveSupplyBefore, state);\n+ // Reload state from storage so emission accumulation uses the fresh accumulator\n+ state = _getVaultRewardStateSlot();\n  for (uint256 i; i < state.length; i++) {\n      _accumulateSecondaryRewardViaEmissionRate(i, state[i], effectiveSupplyBefore);\n  }\n```\n\n---\n\n[85] **3. Ethena cooldownDuration=0: USDe Claimed at Initiation, Finalization Returns tokensClaimed=0 Locking All Funds**\n\n`EthenaWithdrawRequestManager._finalizeWithdrawImpl` · Confidence: 85 · [agents: 2]\n\n**Description**\nWhen Ethena's cooldownDuration==0, sUSDe is burned and USDe deposited during _initiateWithdrawImpl; the finalization balance-diff pattern then sees balanceAfter-balanceBefore==0 because no new tokens arrive during finalization, resulting in tokensClaimed=0 and permanent fund loss for all affected users.\n\n**Fix**\n\n```diff\n- uint256 balanceBefore = USDe.balanceOf(address(this));\n- sUSDe.unstake(address(this));\n- uint256 tokensClaimed = USDe.balanceOf(address(this)) - balanceBefore;\n+ uint256 balanceBefore = USDe.balanceOf(address(this));\n+ if (sUSDe.cooldownDuration() == 0) {\n+     // USDe was already received at initiation\n+     tokensClaimed = balanceBefore;\n+ } else {\n+     sUSDe.unstake(address(this));\n+     tokensClaimed = USDe.balanceOf(address(this)) - balanceBefore;\n+ }\n```\n\n---\n\n[80] **4. LP Exit Zero-Balance Token Omits WRM Creation, Permanently Bricking getWithdrawRequestValue**\n\n`AbstractSingleSidedLP._initiateWithdraw` · Confidence: 80 · [agents: 2]\n\n**Description**\nWhen a Curve pool is imbalanced and `remove_liquidity` returns `exitBalances[i]==0` for one token, no WithdrawRequestManager is initiated for that token; subsequent `getWithdrawRequestValue` calls `require(hasRequest)` for all tokens and revert, making `price(borrower)` revert and rendering the account permanently unliquidatable (Chain: F-004 + F-009).\n\n**Fix**\n\n```diff\n  for (uint256 i; i < exitBalances.length; i++) {\n-     if (exitBalances[i] > 0) {\n-         withdrawRequestManagers[i].initiateWithdraw(exitBalances[i]);\n-     }\n+     // Always create a request (even zero-amount) so hasRequest passes for all tokens\n+     withdrawRequestManagers[i].initiateWithdraw(exitBalances[i]);\n  }\n```\n\n---\n\n[80] **5. forceWithdraw Has No Access Control and Passes Attacker-Controlled Slippage Data to LP Exit**\n\n`AbstractLendingRouter.forceWithdraw` · Confidence: 80 · [agents: 3]\n\n**Description**\nAny caller can invoke `forceWithdraw` for any unhealthy account with attacker-controlled `data`, setting `minAmounts=[0,0]` for the Curve LP exit; this enables a sandwich attack where the attacker manipulates the pool before and after the zero-slippage exit, extracting value directly from the victim's collateral.\n\n**Fix**\n\n```diff\n- function forceWithdraw(address account, address vault, bytes calldata data) external {\n+ function forceWithdraw(address account, address vault, bytes calldata data) external isAuthorized(account, vault) {\n```\nAdditionally, validate `minAmounts` against oracle-derived floors inside the vault's `_initiateWithdraw`.\n\n---\n\n[80] **6. Chainlink latestRoundData Missing Staleness Check in Curve2TokenOracle and PendlePTOracle**\n\n`Curve2TokenOracle._calculateBaseToQuote` · `PendlePTOracle._calculateBaseToQuote` · Confidence: 80 · [agents: 1]\n\n**Description**\nOnly `require(answer > 0)` is checked on Chainlink responses; no `updatedAt` staleness or `answeredInRound >= roundId` validation allows stale prices to be used for LP token and PT collateral valuation, enabling excess borrowing or spurious liquidations during feed outages.\n\n**Fix**\n\n```diff\n- (,int256 answer,,, ) = feed.latestRoundData();\n- require(answer > 0, 'Chainlink Rate Error');\n+ (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = feed.latestRoundData();\n+ require(answer > 0 && answeredInRound >= roundId && updatedAt >= block.timestamp - MAX_STALENESS, 'Stale oracle');\n```\n\n---\n\n[75] **7. Strict Equality in finalizeAndRedeemWithdrawRequest Permanently Bricks Full Redemption After Partial Liquidation**\n\n`AbstractWithdrawRequestManager.finalizeAndRedeemWithdrawRequest` · Confidence: 75 · [agents: 2]\n\n**Description**\nThe full-redemption path requires `s_withdraw.yieldTokenAmount == withdrawYieldTokenAmount`; after partial liquidation causes rounding drift between the on-chain collateral balance and stored `sharesAmount`, integer division produces a `withdrawYieldTokenAmount` that never exactly equals the stored value, making the equality check revert permanently and locking the account.\n\n**Fix**\n\n```diff\n- require(s_withdraw.yieldTokenAmount == withdrawYieldTokenAmount);\n+ // Accept full-or-slightly-over redemption; cap at stored amount\n+ if (withdrawYieldTokenAmount >= s_withdraw.yieldTokenAmount) {\n+     withdrawYieldTokenAmount = s_withdraw.yieldTokenAmount;\n+ }\n```\n\n---\n\n[75] **8. price() Hardcoded 10^12 Scale Factor Produces 1e12-Too-Small Oracle Value for 6-Decimal Asset Vaults**\n\n`AbstractYieldStrategy.price` · Confidence: 75 · [agents: 1]\n\n**Description**\nThe hardcoded `(10 ** (36 - 24))` scale factor in `price()` is correct for 18-decimal assets but produces a value 10^12 too small for 6-decimal assets (USDC/USDT); Morpho computes `maxBorrow = collateral * price / 1e36 ≈ 0`, making all USDC/USDT vault positions unable to borrow anything — effectively a DoS on 6-decimal asset strategies.\n\n**Fix**\n\n```diff\n- return convertToAssets(SHARE_PRECISION) * (10 ** (36 - 24));\n+ return convertToAssets(SHARE_PRECISION) * (10 ** (36 - IERC20Metadata(asset()).decimals()));\n```\n\n---\n\n[75] **9. Oracle Revert in getWithdrawRequestValue Blocks Liquidation of Pending-Withdrawal Accounts**\n\n`AbstractSingleSidedLP.getWithdrawRequestValue` · Confidence: 75 · [agents: 1]\n\n**Description**\nAny oracle revert (Chainlink circuit breaker, sequencer downtime on Arbitrum) in the LP token price path inside `getWithdrawRequestValue` propagates through `convertToAssets` → `price(borrower)` → Morpho health check, making insolvent accounts permanently immune to liquidation and allowing bad debt to accumulate unchecked.\n\n**Fix**\n\nWrap oracle calls in try/catch and return a conservative lower-bound valuation on oracle failure:\n```diff\n- uint256 oraclePrice = TRADING_MODULE.getOraclePrice(token, loanAsset);\n+ try TRADING_MODULE.getOraclePrice(token, loanAsset) returns (uint256 p) {\n+     oraclePrice = p;\n+ } catch {\n+     oraclePrice = lastKnownPrice[token]; // or return conservative minimum\n+ }\n```\n\n---\n\n[75] **10. Dinero uint16 s_batchNonce Overflows at 65536 Calls, Permanently Bricking All Future Withdrawals**\n\n`DineroWithdrawRequestManager._initiateWithdrawImpl` · Confidence: 75 · [agents: 1]\n\n**Description**\nSolidity 0.8+ checked arithmetic causes `++s_batchNonce` to panic-revert when `s_batchNonce` reaches 65535, after which every new withdrawal initiation reverts, permanently bricking the entire Dinero strategy with no on-chain recovery path.\n\n---\n\n[70] **11. tokenizeWithdrawRequest Integer Truncation Assigns Zero yieldTokenAmount to Liquidator for Small Shares**\n\n`AbstractWithdrawRequestManager.tokenizeWithdrawRequest` · Confidence: 70 · [agents: 2]\n\n**Description**\nWhen `s_withdraw.yieldTokenAmount * sharesAmount < s_withdraw.sharesAmount`, the liquidator's `yieldTokenAmount` truncates to zero; the liquidator receives shares but gets 0 tokens on finalization, while the original account retains an over-proportional yield token claim enabling iterative self-liquidation exploitation.\n\n---\n\n[70] **12. Partial Redemption Double-Scaling Truncation Permanently Strands Yield Tokens in WithdrawRequestManager**\n\n`AbstractWithdrawRequestManager.finalizeAndRedeemWithdrawRequest` · Confidence: 70 · [agents: 2]\n\n**Description**\nTwo successive integer divisions on partial redemptions (`totalWithdraw * yieldTokenFraction / total` then `* partialFraction / stored`) accumulate rounding dust that is never returned to users since `s.totalWithdraw` is not decremented on partial burns, permanently locking these tokens in the contract.\n\n---\n\n[65] **13. t_AllowTransfer Partial-Amount Transfer Consumes Full Authorization, Enabling Liquidation Griefing**\n\n`AbstractYieldStrategy._update` · Confidence: 65 · [agents: 2]\n\n**Description**\nThe check `t_AllowTransfer_Amount < value` (strict less-than) permits any transfer of amount ≤ authorized ceiling and then clears both authorization slots; an attacker holding vault shares can front-run a liquidation by calling `transfer(lendingRouter, 1)` — the 1-share transfer consumes the authorization, causing the actual liquidation transfer of N shares to revert as Unauthorized.\n\n---\n\nFindings List\n\n| # | Confidence | Title |\n|---|---|---|\n| 1 | [90] | Dinero canFinalizeWithdrawRequest Condition Inverted |\n| 2 | [85] | Stale VaultRewardState Accumulator Overwrite |\n| 3 | [85] | Ethena cooldown=0 Locks All Funds on Finalization |\n| 4 | [80] | LP Exit Zero-Balance Bricks getWithdrawRequestValue |\n| 5 | [80] | forceWithdraw Missing Auth + Zero-Slippage LP Exit |\n| 6 | [80] | Chainlink No Staleness Check in LP/PT Oracles |\n| 7 | [75] | Strict Equality Bricks Full Redemption After Partial Liquidation |\n| 8 | [75] | price() 10^12 Scale Wrong for 6-Decimal Asset Vaults |\n| 9 | [75] | Oracle Revert Blocks Liquidation of Pending-Withdraw Accounts |\n| 10 | [75] | Dinero uint16 batchNonce Overflows at 65536 |\n| 11 | [70] | tokenizeWithdrawRequest Zero yieldTokenAmount for Liquidator |\n| 12 | [70] | Partial Redemption Double-Scaling Strands Tokens |\n| 13 | [65] | t_AllowTransfer Partial Consumption Enables Liquidation Griefing |\n\n---\n\n## Leads\n\n_High-signal trails for manual investigation._\n\n- **Reward Debt Reset via Direct updateAccountRewards Call** — `AbstractRewardManager.updateAccountRewards` — Code smells: no access control modifier on external function — Although the delegatecall architecture means direct calls hit the reward manager's own storage (not the vault's), verify that no deployment scenario exposes the vault's storage to direct calls via the reward manager proxy.\n\n- **Missing Cooldown Check in initiateWithdraw** — `AbstractLendingRouter.initiateWithdraw` — Code smells: no `_checkExit` call with COOLDOWN_PERIOD — `exitPosition` enforces a 5-minute cooldown but `initiateWithdraw` does not; user can immediately initiate withdrawal after entering, bypassing flash-loan protection by escrowing shares.\n\n- **getWithdrawRequestValue Division by Zero After Partial Burn** — `AbstractWithdrawRequestManager.getWithdrawRequestValue` — Code smells: `w.sharesAmount` in denominator with no zero-check — If partial burns decrement `sharesAmount` to 0 before `yieldTokenAmount` is also exhausted, valuation reverts permanently.\n\n- **_postLiquidation Incorrect sharesInEscrow Flag for Liquidator** — `RewardManagerMixin._postLiquidation` — Code smells: `sharesInEscrow: didTokenize` passed for liquidator — When `didTokenize=true`, liquidator's reward debt is not updated (short-circuit), potentially overpaying the liquidator on next reward claim.\n\n- **Taylor Series Fee Underestimation at High Rates / Long Dormancy** — `AbstractYieldStrategy._calculateAdditionalFeesInYieldToken` — Code smells: 3-term Taylor approximation for e^x — At x≥1 (high fee rate or multi-year dormancy), approximation error exceeds 5%; fee receiver collects materially less than intended rate.\n\n- **Migration Repayment Zero-Approval Failure** — `MorphoLendingRouter.onMorphoRepay` — Code smells: `checkApprove(migrateFrom, 0)` in migration path — The new lending router's approval for `assetToRepay` may be 0, causing `safeTransferFrom` in migration repayment to revert silently.\n\n---\n\n> This review was performed by an AI assistant. AI analysis can never verify the complete absence of vulnerabilities and no guarantee of security is given. Team security reviews, bug bounty programs, and on-chain monitoring are strongly recommended."
+}

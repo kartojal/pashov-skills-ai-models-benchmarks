@@ -1,0 +1,272 @@
+{
+  "metadata": {
+    "model": "qwen/qwen3.5-plus-2026-02-15",
+    "harness": "opencode",
+    "target": "notional-finance",
+    "timestamp": "2026-03-24T19:45:39Z",
+    "duration_seconds": 1247,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 18,
+    "critical": 6,
+    "high": 8,
+    "medium": 4,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Collateral Price Manipulation via External price(borrower) Function",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Oracle Manipulation",
+      "description": "The price(address borrower) function in AbstractYieldStrategy is external and sets t_CurrentAccount transient storage. Any caller can manipulate the vault's collateral valuation by calling price(victim) where victim has a pending withdraw request. This causes convertToAssets() to use getWithdrawRequestValue() instead of normal valuation, producing incorrect prices. Morpho's healthFactor() uses this price for liquidation decisions, enabling false liquidations or over-borrowing.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "119-134"
+      },
+      "recommendation": "Make price(address) internal-only or restrict t_CurrentAccount setting to trusted lending routers. Add validation that t_CurrentAccount can only be set by authorized contracts. Alternatively, cache the price at the start of sensitive operations and use the cached value throughout.",
+      "agents_reporting": ["agent-1", "agent-4", "agent-8"]
+    },
+    {
+      "id": "F-002",
+      "title": "Inverted Sequencer Uptime Check in Custom Oracles",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Oracle Manipulation",
+      "description": "The _checkSequencer() function in AbstractCustomOracle has inverted logic. It requires answer == 0 (sequencer DOWN) to proceed, but Chainlink returns answer == 1 when sequencer is UP. Additionally, the grace period check uses < instead of >. During L2 sequencer downtime, oracle calls will succeed when they should fail, allowing price manipulation during outages.",
+      "location": {
+        "file": "src/oracles/AbstractCustomOracle.sol",
+        "lines": "524-531"
+      },
+      "recommendation": "Fix the logic to: require(answer == 1, 'Sequencer Down') and require(block.timestamp - startedAt > SEQUENCER_UPTIME_GRACE_PERIOD, 'Sequencer Grace Period'). Add comprehensive tests for sequencer downtime scenarios.",
+      "agents_reporting": ["agent-1"]
+    },
+    {
+      "id": "F-003",
+      "title": "Withdraw Request Tokenization Does Not Update Total Yield Token Amount",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Accounting Error",
+      "description": "When tokenizeWithdrawRequest() transfers a portion of a withdraw request from _from to _to during liquidation, it proportionally splits the yield token amount but never updates s_tokenizedWithdrawRequest[requestId].totalYieldTokenAmount. When the request finalizes, the pro-rata calculation uses the stale totalYieldTokenAmount, causing incorrect distribution. Multiple tokenizations compound rounding errors, stranding value or allowing double-claiming.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "3819-3858"
+      },
+      "recommendation": "Update s_tokenizedWithdrawRequest[requestId].totalYieldTokenAmount when tokenizing to reflect the sum of all tokenized yield token amounts. Track tokenized amounts separately and ensure conservation of withdraw claim value.",
+      "agents_reporting": ["agent-5", "agent-6", "agent-8"]
+    },
+    {
+      "id": "F-004",
+      "title": "Reward Manipulation via Effective Supply Changes During Withdraw",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Economic Exploit",
+      "description": "When users initiate withdrawals, their shares are escrowed (s_escrowedShares += sharesHeld), reducing effectiveSupply() = totalSupply() - s_escrowedShares + VIRTUAL_SHARES. This inflates accumulatedRewardPerVaultShare for remaining users. However, withdrawing users already claimed rewards up to the point of escrow, leaving less for them when they finalize. Attackers can strategically time deposits/withdrawals to extract disproportionate rewards from withdrawing users.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "1306-1326, 1417-1426"
+      },
+      "recommendation": "Continue including escrowed shares in effective supply calculation until rewards are actually claimed, not just until withdraw is initiated. Alternatively, snapshot reward state at withdraw initiation and settle rewards at finalization.",
+      "agents_reporting": ["agent-4", "agent-6", "agent-8"]
+    },
+    {
+      "id": "F-005",
+      "title": "Exit-With-Repay Burns Shares Before Verifying Sufficient Assets",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Logic Error",
+      "description": "In onMorphoRepay(), shares are burned via IYieldStrategy(vault).burnShares() BEFORE checking if assetsWithdrawn >= assetToRepay. If the check fails (InsufficientAssetsForRepayment), the transaction reverts but shares are already burned. The user permanently loses their position with no way to recover funds.",
+      "location": {
+        "file": "src/routers/MorphoLendingRouter.sol",
+        "lines": "2253-2265"
+      },
+      "recommendation": "Verify sufficient assets BEFORE burning shares. Use a checks-effects-interactions pattern: first simulate the redeem to check assetsWithdrawn, then burn shares and transfer profits. Alternatively, use a pull-based pattern where shares are only burned after successful repayment.",
+      "agents_reporting": ["agent-5", "agent-8"]
+    },
+    {
+      "id": "F-006",
+      "title": "Reentrancy in _update() Authorization Cleanup",
+      "severity": "critical",
+      "confidence": "medium",
+      "category": "Reentrancy",
+      "description": "The _update() function checks t_AllowTransfer_To and t_AllowTransfer_Amount, then deletes these transient variables BEFORE calling super._update(). If the transfer triggers a callback that calls another transfer before deletion completes (via reentrancy through external calls in _transferYieldTokenToOwner), the authorization could be reused. This enables unauthorized transfers.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "349-358"
+      },
+      "recommendation": "Delete authorization variables BEFORE performing the transfer, not after the check. Use a mutex or reentrancy guard on the entire _update() function. Ensure all external calls occur after state updates are complete.",
+      "agents_reporting": ["agent-5", "agent-8"]
+    },
+    {
+      "id": "F-007",
+      "title": "Rounding Direction Systematically Favors Protocol Over Users",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Precision Error",
+      "description": "Share minting in _mintSharesGivenAssets() uses floor division: sharesMinted = (yieldTokensMinted * effectiveSupply()) / (initialYieldTokenBalance - feesAccrued() + VIRTUAL_YIELD_TOKENS). This systematically rounds down, causing depositors to receive fewer shares than entitled. Share burning in _burnShares() also uses floor division for asset calculation. Repeated deposits/withdrawals compound this loss, extracting value from users to the protocol.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "404-415, 418-439"
+      },
+      "recommendation": "Use ceiling division for share minting: (a * b + c - 1) / c. For share burning, track exact asset amounts before redemption and ensure withdrawers receive their full pro-rata portion. Alternatively, use a consistent rounding direction that favors users on entry and protocol on exit.",
+      "agents_reporting": ["agent-2"]
+    },
+    {
+      "id": "F-008",
+      "title": "Taylor Series Approximation Truncates Fee Calculations",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Precision Error",
+      "description": "The _calculateAdditionalFeesInYieldToken() function uses a 3-term Taylor series approximation for e^x. For large x values (representing long time intervals or high APR), higher-order terms are truncated. With feeRate=10% and timeSinceLastFeeAccrual=365 days, the x^4 term (~4.17e12 wei) is truncated. Protocol loses fee revenue on large time intervals, and the error compounds with each accrual.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "320-340"
+      },
+      "recommendation": "Include additional Taylor terms for better precision, or use a more accurate exponential approximation (e.g., Pade approximation) for large x values. Add validation that truncation error is bounded.",
+      "agents_reporting": ["agent-2"]
+    },
+    {
+      "id": "F-009",
+      "title": "Partial Withdraw Request Finalization Truncates Token Amounts",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Precision Error",
+      "description": "In finalizeAndRedeemWithdrawRequest(), partial withdrawals calculate: tokensWithdrawn = tokensWithdrawn * withdrawYieldTokenAmount / s_withdraw.yieldTokenAmount. This truncates, causing systematic loss proportional to number of partial claims. Example: 7 withdrawals of 1e18 each from 7e18 total would receive 7*14=98e18 instead of 100e18 due to truncation on each claim.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "3788-3791"
+      },
+      "recommendation": "Track total tokens claimed and ensure sum of all partial claims equals total withdrawal amount. Use complementary calculation: remaining = total - claimed, instead of proportional division.",
+      "agents_reporting": ["agent-2"]
+    },
+    {
+      "id": "F-010",
+      "title": "Small Reward Claims Truncate to Zero While Reward Debt Updates",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Precision Error",
+      "description": "In _claimRewardToken(), rewardToClaim = ((accountSharesBefore * rewardsPerVaultShare) / DEFAULT_PRECISION) - rewardDebt. For small holders with tiny rewards, the division truncates to zero. However, rewardDebt is still updated at line 1384, causing permanent loss of accrued rewards. Repeated claims systematically lose rewards for small holders.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "1377-1390"
+      },
+      "recommendation": "Accumulate truncated dust in a separate tracker and add to next claim when it exceeds threshold. Alternatively, use a minimum claim threshold and allow rewards to accumulate until claimable.",
+      "agents_reporting": ["agent-2"]
+    },
+    {
+      "id": "F-011",
+      "title": "Curve V2 Exit Balance Calculation Uses Incorrect Array Initialization",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "Logic Error",
+      "description": "In _exitPool() for Curve V2, exitBalances array is initialized with tokenBalance values BEFORE remove_liquidity is called. The diff calculation (after - before) then uses pre-populated array values, leading to incorrect exit balance accounting. If Curve V2 pool has rebasing tokens or transfers additional amounts, the calculation can underflow.",
+      "location": {
+        "file": "src/single-sided-lp/CurveConvex2Token.sol",
+        "lines": "3027-3037"
+      },
+      "recommendation": "Initialize exitBalances with zero values before remove_liquidity call, or store before balances in separate variables. Add SafeMath subtraction with underflow check.",
+      "agents_reporting": ["agent-2", "agent-7"]
+    },
+    {
+      "id": "F-012",
+      "title": "ETH/WETH Handling Mismatch Between Internal Representation and Curve",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "Token Compatibility",
+      "description": "The codebase uses ETH_ADDRESS (address(0)) for native ETH internally, but Curve pools use ALT_ETH_ADDRESS (0xEeee...) for ETH. In joinPoolAndStake(), WETH.withdraw(msgValue) converts to native ETH, but Curve interface may expect ALT_ETH_ADDRESS. This causes failed deposits or lost funds when the pool doesn't recognize the ETH representation.",
+      "location": {
+        "file": "src/single-sided-lp/CurveConvex2Token.sol",
+        "lines": "2935-2941"
+      },
+      "recommendation": "Ensure consistent ETH representation by rewriting ETH_ADDRESS to ALT_ETH_ADDRESS before Curve pool interactions. Add validation that the pool accepts the ETH representation being used.",
+      "agents_reporting": ["agent-7"]
+    },
+    {
+      "id": "F-013",
+      "title": "Convex Booster Interface Hardcoded for Mainnet Only",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Cross-Chain Compatibility",
+      "description": "The CurveConvexLib constructor only sets CONVEX_BOOSTER and CONVEX_POOL_ID on CHAIN_ID_MAINNET. On Arbitrum or other L2s with Convex deployments, these remain zero, breaking Convex staking functionality. Additionally, Mainnet Booster.deposit takes 3 params (pid, amount, stake) while Arbitrum takes 2 params (pid, amount) - using wrong interface reverts.",
+      "location": {
+        "file": "src/single-sided-lp/CurveConvex2Token.sol",
+        "lines": "2887-2894"
+      },
+      "recommendation": "Remove chain ID check and initialize Convex parameters based on CONVEX_REWARD_POOL address validity. Branch on chain ID for Booster.deposit call parameters. Add deployment-time validation.",
+      "agents_reporting": ["agent-7"]
+    },
+    {
+      "id": "F-014",
+      "title": "Pool Share Validation Uses Manipulable Total Supply",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "Oracle Manipulation",
+      "description": "In _checkPoolShare(), maxSupplyThreshold = (_totalPoolSupply() * MAX_POOL_SHARE) / DEFAULT_PRECISION. Attacker can flash loan LP tokens to temporarily inflate totalSupply(), allowing vault to exceed safe concentration limits. After flash loan returns, vault owns disproportionate share of real pool, violating single-sided exit safety and enabling manipulation.",
+      "location": {
+        "file": "src/single-sided-lp/AbstractSingleSidedLP.sol",
+        "lines": "2469-2472"
+      },
+      "recommendation": "Use time-weighted average of totalSupply() over multiple blocks, or implement oracle-based totalSupply verification. Add minimum observation period before allowing large deposits.",
+      "agents_reporting": ["agent-6", "agent-7"]
+    },
+    {
+      "id": "F-015",
+      "title": "Health Factor Uses Same Manipulable price(borrower) as Liquidation",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Oracle Manipulation",
+      "description": "MorphoLendingRouter.healthFactor() uses IYieldStrategy(vault).price(borrower) for collateral valuation. Since price() can be manipulated via t_CurrentAccount (see F-001), health factor calculations are also affected. Attacker can manipulate collateral value downward to trigger false liquidations, or upward to borrow more than collateralized.",
+      "location": {
+        "file": "src/routers/MorphoLendingRouter.sol",
+        "lines": "2317-2323"
+      },
+      "recommendation": "Use price() without borrower parameter for healthFactor calculations. Cache price at start of operation and use consistently. Add validation that price deviation from oracle is within acceptable bounds.",
+      "agents_reporting": ["agent-6", "agent-8"]
+    },
+    {
+      "id": "F-016",
+      "title": "Partial Burns of Escrowed Shares Skip Reward Debt Updates",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Accounting Error",
+      "description": "In RewardManagerMixin._burnShares(), when user has withdraw pending (sharesInEscrow=true) and burns subset of shares, updateAccountRewards short-circuits at line 1310: if (sharesInEscrow && accountSharesAfter > 0) return. This skips reward debt update, so rewardDebt remains at old value. When user later claims rewards or burns remaining shares, they claim rewards for shares they no longer hold.",
+      "location": {
+        "file": "src/rewards/RewardManagerMixin.sol",
+        "lines": "1601-1622"
+      },
+      "recommendation": "Remove short-circuit at line 1310 or ensure reward debt is updated even when sharesInEscrow && accountSharesAfter > 0. Alternatively, snapshot reward state at withdraw initiation and settle at finalization.",
+      "agents_reporting": ["agent-6"]
+    },
+    {
+      "id": "F-017",
+      "title": "Expired PT Redemption Creates Withdraw Request with Indefinite Delays",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Logic Error",
+      "description": "In PendlePT._initiateWithdraw(), when PT expires, it's redeemed to TOKEN_OUT_SY (e.g., sUSDe, weETH), then a withdraw request is initiated on TOKEN_OUT_SY. However, TOKEN_OUT_SY may have its own cooldown/withdraw queue (e.g., sUSDe 7-day cooldown, EtherFi validator queue) with indefinite delays. User loses PT position and gains TOKEN_OUT_SY withdrawal risk with no guaranteed timeline.",
+      "location": {
+        "file": "src/staking/PendlePT.sol",
+        "lines": "3438-3450"
+      },
+      "recommendation": "Ensure TOKEN_OUT_SY withdraw manager has guaranteed withdrawal timeline. Add emergency redemption path for stuck tokens. Allow users to choose between immediate redemption (with slippage) or queued withdrawal.",
+      "agents_reporting": ["agent-5", "agent-7", "agent-8"]
+    },
+    {
+      "id": "F-018",
+      "title": "LP Token Valuation Uses Incorrect Decimal Scaling",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Precision Error",
+      "description": "In AbstractLPOracle._calculateLPTokenValue(), the calculation: (tokenClaim * DEFAULT_PRECISION * primaryDecimals) / (price * secondaryDecimals) has decimal mismatch. Token claim is in POOL_PRECISION (1e18), price is in DEFAULT_PRECISION (1e18), but primaryDecimals and secondaryDecimals are 10^decimals. This causes massive over/under-valuation depending on token decimal differences (e.g., USDC 6 decimals vs ETH 18 decimals).",
+      "location": {
+        "file": "src/oracles/AbstractLPOracle.sol",
+        "lines": "679"
+      },
+      "recommendation": "Normalize all values to common precision before calculation: (tokenClaim * primaryDecimals) / (price * secondaryDecimals / DEFAULT_PRECISION). Add comprehensive tests for tokens with different decimals.",
+      "agents_reporting": ["agent-2"]
+    }
+  ],
+  "raw_output": "Security Audit Summary - Notional Finance Leveraged Vault Strategies\n\n================================================================================\nAUDIT SCOPE\n================================================================================\nRepository: targets/notional-finance/repo\nCommit: 0096f1f64071cafbf20062a7c092c6ec89c28275\nFiles analyzed: 31 Solidity files in src/ directory (excluding interfaces/, lib/, mocks/, tests/)\nTotal nSLOC: ~1,959 lines\n\n================================================================================\nMETHODOLOGY\n================================================================================\n8 specialized agents analyzed the codebase in parallel:\n- Agent 1 (Vector Scan): Known vulnerability patterns, reentrancy, access control\n- Agent 2 (Math Precision): Rounding, overflow, Taylor series, share conversions\n- Agent 3 (Access Control): Authorization, privilege escalation, Morpho bypass\n- Agent 4 (Economic Security): Incentives, reward manipulation, liquidation\n- Agent 5 (Execution Trace): State transitions, withdraw flows, callbacks\n- Agent 6 (Invariant): Share supply, reward accounting, price oracle invariants\n- Agent 7 (Periphery): External integrations, token compatibility, cross-chain\n- Agent 8 (First Principles): Architecture-level flaws, price manipulation\n\n================================================================================\nCRITICAL FINDINGS (6)\n================================================================================\n\nF-001: Collateral Price Manipulation via External price(borrower) Function\n- AbstractYieldStrategy.sol:119-134\n- External price() allows any caller to set t_CurrentAccount\n- Manipulates collateral valuation for accounts with pending withdraws\n- Affects Morpho healthFactor and liquidation decisions\n- Agents: 1, 4, 8\n\nF-002: Inverted Sequencer Uptime Check in Custom Oracles  \n- AbstractCustomOracle.sol:524-531\n- Requires answer == 0 (DOWN) instead of answer == 1 (UP)\n- Grace period check uses < instead of >\n- Allows oracle manipulation during L2 sequencer downtime\n- Agents: 1\n\nF-003: Withdraw Request Tokenization Does Not Update Total Yield Token Amount\n- AbstractWithdrawRequestManager.sol:3819-3858\n- tokenizeWithdrawRequest splits yield tokens but doesn't update s_tokenizedWithdrawRequest\n- Finalization uses stale totalYieldTokenAmount for pro-rata calculation\n- Multiple tokenizations compound rounding errors\n- Agents: 5, 6, 8\n\nF-004: Reward Manipulation via Effective Supply Changes During Withdraw\n- AbstractRewardManager.sol:1306-1326, 1417-1426\n- Escrowed shares reduce effectiveSupply, inflating rewards per share\n- Withdrawing users already claimed rewards before escrow\n- Attackers extract disproportionate rewards from withdrawing users\n- Agents: 4, 6, 8\n\nF-005: Exit-With-Repay Burns Shares Before Verifying Sufficient Assets\n- MorphoLendingRouter.sol:2253-2265\n- Shares burned BEFORE checking assetsWithdrawn >= assetToRepay\n- Revert leaves user without shares and unable to exit\n- Permanent loss of position\n- Agents: 5, 8\n\nF-006: Reentrancy in _update() Authorization Cleanup\n- AbstractYieldStrategy.sol:349-358\n- Authorization variables deleted BEFORE super._update() completes\n- Callbacks can reuse authorization for unauthorized transfers\n- Agents: 5, 8\n\n================================================================================\nHIGH FINDINGS (8)\n================================================================================\n\nF-007: Rounding Direction Systematically Favors Protocol Over Users\n- AbstractYieldStrategy.sol:404-415, 418-439\n- Floor division on share minting/burning extracts value from users\n- Compounds with repeated deposits/withdrawals\n- Agents: 2\n\nF-008: Taylor Series Approximation Truncates Fee Calculations\n- AbstractYieldStrategy.sol:320-340\n- 3-term Taylor series truncates higher-order terms\n- Protocol loses fee revenue on large time intervals\n- Agents: 2\n\nF-009: Partial Withdraw Request Finalization Truncates Token Amounts\n- AbstractWithdrawRequestManager.sol:3788-3791\n- Proportional division truncates on each partial claim\n- Multiple partial withdrawals compound losses\n- Agents: 2\n\nF-010: Small Reward Claims Truncate to Zero While Reward Debt Updates\n- AbstractRewardManager.sol:1377-1390\n- Small holders' rewards truncate to zero but debt updates\n- Permanent loss of accrued rewards\n- Agents: 2\n\nF-011: Curve V2 Exit Balance Calculation Uses Incorrect Array Initialization\n- CurveConvex2Token.sol:3027-3037\n- exitBalances initialized before remove_liquidity\n- Can underflow with rebasing tokens or additional transfers\n- Agents: 2, 7\n\nF-012: ETH/WETH Handling Mismatch Between Internal Representation and Curve\n- CurveConvex2Token.sol:2935-2941\n- ETH_ADDRESS (0x0) vs ALT_ETH_ADDRESS (0xEeee...)\n- Causes failed deposits or lost funds\n- Agents: 7\n\nF-013: Convex Booster Interface Hardcoded for Mainnet Only\n- CurveConvex2Token.sol:2887-2894\n- Doesn't work on Arbitrum or other L2s\n- Different Booster.deposit interface per chain\n- Agents: 7\n\nF-014: Pool Share Validation Uses Manipulable Total Supply\n- AbstractSingleSidedLP.sol:2469-2472\n- Flash loan can inflate totalSupply to bypass concentration limits\n- Agents: 6, 7\n\n================================================================================\nMEDIUM FINDINGS (4)\n================================================================================\n\nF-015: Health Factor Uses Same Manipulable price(borrower) as Liquidation\n- MorphoLendingRouter.sol:2317-2323\n- Affected by F-001 price manipulation\n- Agents: 6, 8\n\nF-016: Partial Burns of Escrowed Shares Skip Reward Debt Updates\n- RewardManagerMixin.sol:1601-1622\n- Short-circuit skips reward debt update\n- Users claim rewards for shares they no longer hold\n- Agents: 6\n\nF-017: Expired PT Redemption Creates Withdraw Request with Indefinite Delays\n- PendlePT.sol:3438-3450\n- TOKEN_OUT_SY may have indefinite withdrawal delays\n- Agents: 5, 7, 8\n\nF-018: LP Token Valuation Uses Incorrect Decimal Scaling\n- AbstractLPOracle.sol:679\n- Decimal mismatch causes over/under-valuation\n- Agents: 2\n\n================================================================================\nTOTAL: 18 findings (6 Critical, 8 High, 4 Medium)\n================================================================================\n\nKey Attack Vectors Identified:\n1. Collateral price manipulation via t_CurrentAccount transient storage\n2. Withdraw request accounting errors during tokenization and finalization\n3. Reward manipulation through effective supply changes\n4. Rounding errors that compound across multiple operations\n5. Cross-chain compatibility issues with Convex and ETH handling\n6. Reentrancy in authorization cleanup\n\nMost Critical Path:\nAttacker calls price(victim) → inflates collateral value → borrows maximum → exits before liquidation. Alternatively, manipulates price downward → triggers false liquidation of healthy position → profits from liquidation incentive.\n\nRecommendations:\n1. Immediately fix price() function to restrict t_CurrentAccount setting\n2. Fix sequencer uptime check logic in oracles\n3. Update withdraw request tokenization to track totalYieldTokenAmount\n4. Reform reward accounting to prevent extraction from withdrawing users\n5. Reorder operations in exit-with-repay to check before burning\n6. Add comprehensive tests for edge cases in withdraw flows\n"

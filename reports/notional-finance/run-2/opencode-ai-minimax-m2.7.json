@@ -1,0 +1,219 @@
+{
+  "metadata": {
+    "model": "minimax/minimax-m2.7",
+    "harness": "opencode",
+    "target": "notional-finance",
+    "timestamp": "2026-03-24T03:16:35Z",
+    "duration_seconds": 842,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 18,
+    "critical": 7,
+    "high": 5,
+    "medium": 6,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "DineroWithdrawRequestManager uint16 batchNonce overflow permanently bricks withdrawals",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "integer-overflow",
+      "description": "s_batchNonce is uint16 (max 65535). Each _initiateWithdrawImpl call does ++s_batchNonce which overflows at iteration 65536, causing revert in checked arithmetic (Solidity 0.8+). After overflow, no further withdrawal initiations are possible, permanently bricking all Dinero (pxETH/apxETH) withdrawals for all users. The requestId encoding includes nonce<<240|initialBatchId<<120|finalBatchId, so nonce=0 after overflow creates duplicate requestIds with earlier withdrawals.",
+      "location": { "file": "src/withdraws/Dinero.sol", "lines": "4022,4044" },
+      "recommendation": "Change uint16 s_batchNonce to uint256 to prevent overflow, or add require(nonce < 65535) check before increment.",
+      "agents_reporting": ["vector-scan-agent", "invariant-agent"]
+    },
+    {
+      "id": "F-002",
+      "title": "Ethena cooldownDuration==0 causes permanent fund lock — sUSDe burned on initiation, zero tokens on finalization",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "accounting-error",
+      "description": "When sUSDe.cooldownDuration() == 0, _startCooldown immediately calls sUSDe.redeem() which burns sUSDe and transfers USDe to the cooldown holder. During finalization, _finalizeCooldown checks cooldownEnd==0 && duration==0, skips the unstake call, and the balance diff (balanceAfter - balanceBefore) is 0 since USDe was already transferred. tokensClaimed=0 but finalized=true. The user's entire escrowed balance is permanently lost because the sUSDe was already burned during initiation.",
+      "location": { "file": "src/withdraws/Ethena.sol", "lines": "4118-4130,4132-4152" },
+      "recommendation": "Handle cooldownDuration==0 as a special case in _initiateWithdrawImpl — skip cooldown entirely and mark as finalized immediately since redemption happens atomically. Alternatively, revert when cooldownDuration==0 with a clear error message.",
+      "agents_reporting": ["vector-scan-agent", "invariant-agent", "economic-security-agent"]
+    },
+    {
+      "id": "F-003",
+      "title": "LP single-sided withdrawal creates partial withdraw requests that permanently lock funds",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "invariant-violation",
+      "description": "BaseLPLib.initiateWithdraw skips tokens where exitBalances[i]==0 ('if (exitBalances[i] == 0) continue;'). But getWithdrawRequestValue requires ALL tokens to have a request ('require(hasRequest)' for every token). When a user does a single-sided withdrawal (only PRIMARY_INDEX has non-zero exitBalance), other pool tokens skip request creation. The user's escrowed position can never be valued — convertToAssets reverts, blocking liquidation and trapping user funds. Additionally, finalizeAndRedeemWithdrawRequest reverts if ANY token's request is not finalized, so a user with multi-token LP position where one token's external protocol is delayed cannot rescue the other tokens.",
+      "location": { "file": "src/single-sided-lp/AbstractSingleSidedLP.sol", "lines": "2677-2689,2641-2649" },
+      "recommendation": "Either (1) require all exitBalances > 0 for LP withdrawals, (2) handle zero-exitBalance tokens gracefully in getWithdrawRequestValue by assuming zero value, or (3) allow partial finalization per token instead of requiring all to finalize atomically.",
+      "agents_reporting": ["execution-trace-agent", "invariant-agent"]
+    },
+    {
+      "id": "F-004",
+      "title": "claimAccountRewards has no access control — anyone can manipulate any account's reward debt state",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "access-control",
+      "description": "RewardManagerMixin.claimAccountRewards(vault, account, sharesHeld) has no onlyLendingRouter modifier or account ownership check. The ADDRESS_REGISTRY.isLendingRouter check only changes which source is used for sharesHeld, not authorization. Any address can pass arbitrary account and sharesHeld values. When sharesInEscrow=true and accountSharesAfter=0, reward debt is deleted without transferring rewards to the account. An attacker can call claimAccountRewards(vault, MORPHO_ADDRESS, ...) to misdirect rewards accumulated on the Morpho contract's collateral holdings, or grief other users by corrupting their reward debt state.",
+      "location": { "file": "src/rewards/RewardManagerMixin.sol", "lines": "1655-1677" },
+      "recommendation": "Add onlyLendingRouter modifier to claimAccountRewards, or require msg.sender == account. External callers should use the router's claimRewards function which correctly passes msg.sender as the account.",
+      "agents_reporting": ["access-control-agent"]
+    },
+    {
+      "id": "F-005",
+      "title": "healthFactor() rounds borrower debt DOWN while Morpho uses toAssetsUp (rounds UP)",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "rounding-error",
+      "description": "MorphoLendingRouter.healthFactor() computes: borrowed = uint256(position.borrowShares) * uint256(market.totalBorrowAssets) / uint256(market.totalBorrowShares). This regular division rounds DOWN. However, Morpho internally uses toAssetsUp for debt calculation (ceil division): toAssetsUp(shares, totalAssets, totalShares) = (shares * (totalAssets+1) + (totalShares+VIRTUAL_SHARES) - 1) / (totalShares+VIRTUAL_SHARES). This rounds UP against the borrower. Example: borrowShares=1e18, totalBorrowAssets=1e18+1, totalBorrowShares=1e18 → router calculates borrowed=1e18, Morpho calculates 1e18+1. The health factor appears better than reality by 1 unit per calculation, potentially allowing positions to avoid liquidation.",
+      "location": { "file": "src/routers/MorphoLendingRouter.sol", "lines": "2305" },
+      "recommendation": "Use Morpho's toAssetsUp equivalent: (borrowShares * (totalBorrowAssets + 1) + (totalBorrowShares + VIRTUAL_SHARES) - 1) / (totalBorrowShares + VIRTUAL_SHARES), or import Morpho's library function directly.",
+      "agents_reporting": ["math-precision-agent"]
+    },
+    {
+      "id": "F-006",
+      "title": "ConvexRewardManager uses 3-param Booster.deposit but Arbitrum Booster requires 2 params",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "cross-chain-compatibility",
+      "description": "On Mainnet, Convex Booster.deposit(pid, amount, stake) takes 3 parameters. On Arbitrum, the Booster.deposit interface takes only 2 parameters (pid, amount) — no stake boolean. ConvexRewardManager._depositIntoNewRewardPool calls IConvexBooster.deposit(poolId, poolTokens, true) with 3 params. If deployed on Arbitrum, the 'true' (stake) parameter is misinterpreted as the pid, causing deposit failure or mis-routing of LP tokens to wrong pool. The code only checks block.chainid == CHAIN_ID_MAINNET to conditionally use Convex, but doesn't branch on chain id for the deposit interface.",
+      "location": { "file": "src/rewards/ConvexRewardManager.sol", "lines": "1495,2872" },
+      "recommendation": "Use chain-specific interfaces for Convex Booster, or deploy separate implementations per chain. Branch on block.chainid for the deposit call signature.",
+      "agents_reporting": ["economic-security-agent"]
+    },
+    {
+      "id": "F-007",
+      "title": "forceWithdraw has no access control — anyone can force-withdraw any account",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "access-control",
+      "description": "AbstractLendingRouter.forceWithdraw(account, vault, data) has no isAuthorized modifier and no requirement that msg.sender == account. It only checks health factor (healthy positions cannot be force-withdrawn). Combined with the approved operator griefing vector (enterPosition with zero amounts resets cooldown), an attacker can: (1) grief a victim's cooldown using approved operator privileges, (2) force-withdraw the victim's now-unhealthy position, causing immediate loss of funds. The initiateWithdraw function correctly has isAuthorized, but forceWithdraw omits this check.",
+      "location": { "file": "src/routers/AbstractLendingRouter.sol", "lines": "1878-1888" },
+      "recommendation": "Add require(msg.sender == account || isAuthorized) to forceWithdraw, matching the protection on initiateWithdraw.",
+      "agents_reporting": ["access-control-agent"]
+    },
+    {
+      "id": "F-008",
+      "title": "initializeMarket writes s_morphoParams BEFORE external call — front-running causes permanent vault DoS",
+      "severity": "high",
+      "confidence": "high",
+      "category": "front-running",
+      "description": "MorphoLendingRouter.initializeMarket writes s_morphoParams[vault] = marketParams BEFORE calling MORPHO.createMarket(marketParams). An attacker can front-run by calling MORPHO.createMarket(marketParams(vault)) directly with identical params. The router's subsequent createMarket call then reverts (market already exists), but s_morphoParams is already written. Any subsequent enterPosition calls invoke MORPHO.borrow(m, ...) which fails because the vault's router thinks the market exists (params set) but the external state is inconsistent. The vault is permanently unusable through this router path.",
+      "location": { "file": "src/routers/MorphoLendingRouter.sol", "lines": "2066-2078" },
+      "recommendation": "Call MORPHO.createMarket() first, capture success, and only write s_morphoParams on success. Use a try/catch or check return value before writing storage.",
+      "agents_reporting": ["access-control-agent"]
+    },
+    {
+      "id": "F-009",
+      "title": "AbstractLPOracle primary token spot price never validated against oracle rate",
+      "severity": "high",
+      "confidence": "high",
+      "category": "oracle-manipulation",
+      "description": "In _calculateLPTokenValue, spot price validation only applies to non-primary tokens (i < PRIMARY_INDEX or i > PRIMARY_INDEX). The primary token index spot price is never checked against the oracle rate. An attacker can manipulate the primary token's price in the Curve pool via flash loan, then call vault.price() which reads LP token value based on oracle rates that lag. Since the vault IS Morpho's oracle, manipulated price directly increases borrowing capacity, enabling undercollateralized borrowing.",
+      "location": { "file": "src/oracles/AbstractLPOracle.sol", "lines": "653-678" },
+      "recommendation": "Add spot price validation for the primary token index similar to secondary tokens.",
+      "agents_reporting": ["economic-security-agent"]
+    },
+    {
+      "id": "F-010",
+      "title": "Virtual shares keep effectiveSupply > 0 on empty vault — rewards accumulate but are unclaimable",
+      "severity": "high",
+      "confidence": "high",
+      "category": "reward-accounting",
+      "description": "effectiveSupply() returns totalSupply() - s_escrowedShares + VIRTUAL_SHARES (VIRTUAL_SHARES=1e6). On an empty vault (totalSupply == escrowedShares), effectiveSupply = 1e6. Rewards accumulate via _accumulateSecondaryRewardViaClaim with this effectiveSupply. But in _claimRewardToken, reward is calculated based on accountShares (0 for any real address), resulting in rewardToClaim = 0. These rewards are permanently stuck — they cannot be claimed by any real user but also don't revert.",
+      "location": { "file": "src/rewards/AbstractRewardManager.sol", "lines": "150-152,1413-1415,1377" },
+      "recommendation": "Set effectiveSupply to 0 when totalSupply equals escrowedShares, or track virtual shares separately and exclude them from reward distribution calculations.",
+      "agents_reporting": ["economic-security-agent"]
+    },
+    {
+      "id": "F-011",
+      "title": "User-controlled tradeType in redeemData allows exact-out flip with zero minPurchaseAmount",
+      "severity": "high",
+      "confidence": "high",
+      "category": "user-controlled-parameters",
+      "description": "AbstractStakingStrategy._redeemShares accepts user-supplied RedeemParams including tradeType. If user passes TradeType.EXACT_OUT_SINGLE with minPurchaseAmount=0, the DEX may accept any output amount, bypassing slippage protection. The semantics flip from 'sell exactly X tokens for minimum Y' to 'buy exactly Y tokens for maximum X' — the 'excess' tokens remain in the vault. Combined with certain dexIds that revoke allowances after swap, an attacker could drain vault assets through malicious routing.",
+      "location": { "file": "src/staking/AbstractStakingStrategy.sol", "lines": "3147" },
+      "recommendation": "Enforce tradeType in vault-level params — ignore user-supplied tradeType or restrict to known-safe values. Validate minPurchaseAmount > 0 for EXACT_OUT trades.",
+      "agents_reporting": ["execution-trace-agent"]
+    },
+    {
+      "id": "F-012",
+      "title": "Partial withdrawal corrupts sharesAmount invariant — subsequent valuation inflated",
+      "severity": "high",
+      "confidence": "high",
+      "category": "accounting-error",
+      "description": "In AbstractWithdrawRequestManager.finalizeAndRedeemWithdrawRequest, when withdrawYieldTokenAmount < s_withdraw.yieldTokenAmount (partial redemption), sharesAmount is reduced but NOT scaled proportionally. The original ratio yieldTokenAmount/sharesAmount is corrupted. Subsequent getWithdrawRequestValue calculations for remaining escrowed shares use inflated per-share values, allowing the user to borrow more against their overstated collateral.",
+      "location": { "file": "src/withdraws/AbstractWithdrawRequestManager.sol", "lines": "3763-3771" },
+      "recommendation": "Scale sharesAmount proportionally: sharesAmount = sharesAmount * withdrawYieldTokenAmount / originalYieldTokenAmount.",
+      "agents_reporting": ["periphery-agent"]
+    },
+    {
+      "id": "F-013",
+      "title": "tokenizeWithdrawRequest silently overwrites existing request when liquidator already has one",
+      "severity": "high",
+      "confidence": "high",
+      "category": "silent-state-overwrite",
+      "description": "When _from has a pending withdraw request and receives shares via liquidation, tokenizeWithdrawRequest transfers the yieldTokens to _to but the check 'toWithdraw.requestId != 0 && toWithdraw.requestId != requestId' only prevents creating a NEW request when one exists with a DIFFERENT id. If requestIds happen to match (same nonce, overlapping batch), the existing request is silently deleted. The original queued withdrawal is lost.",
+      "location": { "file": "src/withdraws/AbstractWithdrawRequestManager.sol", "lines": "3806-3809" },
+      "recommendation": "Revert if toWithdraw.requestId != 0 AND toWithdraw.requestId != requestId — always revert when destination already has a DIFFERENT pending request.",
+      "agents_reporting": ["periphery-agent"]
+    },
+    {
+      "id": "F-014",
+      "title": "MorphoLendingRouter.price uses stale t_CurrentAccount when called directly via Morpho",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "oracle-manipulation",
+      "description": "When price() is called through the lending router, t_CurrentAccount is set to the borrower. But Morpho calls vault.price(borrower) directly during borrow/liquidate without going through the router, leaving t_CurrentAccount unset or stale. In convertToAssets, if t_CurrentAccount != 0 and _isWithdrawRequestPending(t_CurrentAccount), it uses getWithdrawRequestValue which may return an inflated value. An attacker can initiate a withdrawal to inflate their request value, then call Morpho.borrow directly to benefit from inflated collateral.",
+      "location": { "file": "src/routers/MorphoLendingRouter.sol", "lines": "2090" },
+      "recommendation": "Clear t_CurrentAccount in Morpho's callback or use msg.sender instead of t_CurrentAccount in price().",
+      "agents_reporting": ["execution-trace-agent"]
+    },
+    {
+      "id": "F-015",
+      "title": "AbstractRewardManager._claimVaultRewards skips accumulation during cooldown without updating state",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "reward-accounting",
+      "description": "In _claimVaultRewards, 'if (block.timestamp < rewardPool.lastClaimTimestamp + rewardPool.forceClaimAfter) return;' causes early return without updating accumulatedRewardPerVaultShare or lastClaimTimestamp. Rewards that accumulate during the cooldown window are never distributed to vault shareholders. Users who exit during the cooldown window permanently lose their share of those rewards.",
+      "location": { "file": "src/rewards/AbstractRewardManager.sol", "lines": "1336-1337" },
+      "recommendation": "Update lastClaimTimestamp even on early return so the next claim accounts for elapsed time, or track skipped intervals separately.",
+      "agents_reporting": ["execution-trace-agent"]
+    },
+    {
+      "id": "F-016",
+      "title": "PendlePT._redeemPT callback reentrancy — Pendle market operations invoke callbacks",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "reentrancy",
+      "description": "PendlePTLib.swapExactPtForToken calls PENDLE_ROUTER.swapExactPtForToken which may invoke market callbacks for limit orders. During the callback window, an attacker can re-enter the vault and manipulate state. The vault has no reentrancy guard on _redeemShares or _redeemPT.",
+      "location": { "file": "src/staking/PendlePT.sol", "lines": "3396" },
+      "recommendation": "Add nonReentrant modifier to _redeemShares and all paths through _redeemPT.",
+      "agents_reporting": ["execution-trace-agent"]
+    },
+    {
+      "id": "F-017",
+      "title": "Taylor series fee approximation underestimates fees — precision loss in _calculateAdditionalFeesInYieldToken",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "precision-loss",
+      "description": "_calculateAdditionalFeesInYieldToken uses eToTheX approximation with only 3 terms. The calculation 'preFeeUserHeldYieldTokens * DEFAULT_PRECISION / eToTheX' performs multiplication before division, losing precision. For x=0.1e18 (~36.5 days at feeRate=0.1e18), error ~0.02%. At x=0.5 (182 days), error ~0.18%. This systematically undercharges fees, allowing borrowers to extract more yield than intended.",
+      "location": { "file": "src/AbstractYieldStrategy.sol", "lines": "322" },
+      "recommendation": "Compute division before multiplication or use higher-order Taylor terms for more accurate exp().",
+      "agents_reporting": ["math-precision-agent"]
+    },
+    {
+      "id": "F-018",
+      "title": "Reward truncation to zero in _accumulateSecondaryRewardViaClaim — unclaimable dust",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "rounding-error",
+      "description": "In _accumulateSecondaryRewardViaClaim: 'state.accumulatedRewardPerVaultShare += (tokensClaimed * DEFAULT_PRECISION / effectiveSupplyBefore).toUint128();' When tokensClaimed is small relative to effectiveSupplyBefore (e.g., tokensClaimed=1 and effectiveSupplyBefore=1e30), division truncates to zero. These zero-value accumulations persist in storage but are never claimable — they represent permanent dust that distorts future rewardPerVaultShare calculations.",
+      "location": { "file": "src/rewards/AbstractRewardManager.sol", "lines": "1413-1415" },
+      "recommendation": "Use a larger intermediate precision or require a minimum claimable threshold before updating accumulatedRewardPerVaultShare.",
+      "agents_reporting": ["math-precision-agent"]
+    }
+  ],
+  "raw_output": "## Security Audit — Notional Finance Leveraged Vault Strategies\n\n### Scope\n27 Solidity contracts under src/ — 1,959 nSLOC. Excludes tests/, interfaces/, lib/, mocks/.\n\n### Agents Run\n- Vector Scan Agent (agent-1): attack-vectors pattern matching\n- Math Precision Agent (agent-2): rounding, precision loss, overflow\n- Access Control Agent (agent-3): permission gaps, initialization hijacking\n- Economic Security Agent (agent-4): token behaviors, external dependencies\n- Execution Trace Agent (agent-5): execution flow, stale reads, cross-function\n- Invariant Agent (agent-6): conservation laws, state couplings\n- Periphery Agent (agent-7): utils, libraries, base contracts\n- First Principles Agent (agent-8): implicit assumption violations\n\n### Critical Findings\n1. **F-001**: Dinero uint16 batchNonce overflow at 65536 — permanent withdrawal DoS\n2. **F-002**: Ethena cooldownDuration==0 — sUSDe burned on initiation, zero on finalization\n3. **F-003**: LP single-sided withdrawal creates partial requests that lock funds\n4. **F-004**: claimAccountRewards missing access control — anyone can manipulate reward state\n5. **F-005**: healthFactor() rounding down vs Morpho toAssetsUp rounding up\n6. **F-006**: Convex 3-param deposit vs Arbitrum 2-param — cross-chain incompatibility\n7. **F-007**: forceWithdraw missing access control — anyone can force-withdraw any account\n\n### High Findings\n8. **F-008**: initializeMarket storage-before-call front-running DoS\n9. **F-009**: LP oracle primary token spot price never validated against oracle\n10. **F-010**: Virtual shares keep empty vault effectiveSupply > 0 — unclaimable rewards\n11. **F-011**: User-controlled tradeType allows exact-out flip with zero minPurchaseAmount\n12. **F-012**: Partial withdrawal corrupts sharesAmount invariant\n13. **F-013**: tokenizeWithdrawRequest silently overwrites existing withdraw request\n\n### Medium Findings\n14. **F-014**: price() uses stale t_CurrentAccount when Morpho calls directly\n15. **F-015**: _claimVaultRewards cooldown skip doesn't update accumulators\n16. **F-016**: PendlePT _redeemPT callback reentrancy\n17. **F-017**: Taylor series fee approximation precision loss\n18. **F-018**: Reward truncation to zero in _accumulateSecondaryRewardViaClaim\n\n### Top Leads\n- Approved operator griefing resets cooldown without assets (enterPosition zero amounts)\n- Convex Booster/Gauge reward claiming when CONVEX_BOOSTER=address(0)\n- OETH rebaseOptIn not called — vault forfeits yield\n- Origin queue liquidity grief during finalize\n- Dinero batch ID overlap between users' withdrawal requests\n"
+}

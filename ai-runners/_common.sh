@@ -174,47 +174,10 @@ run_opencode() {
   (
     set -euo pipefail
 
-    # opencode v0.0.55 does not support a --model flag. Use an isolated HOME
-    # per run with a generated config so model selection is deterministic and
-    # parallel runs do not race on ~/.opencode/config.yaml.
-    local real_home="${HOME:-}"
-    local tmp_home
-    tmp_home="$(mktemp -d)"
-    trap 'rm -rf "$tmp_home"' EXIT
-
-    mkdir -p "$tmp_home/.opencode"
-
-    # Keep user commands/skills if present so slash-commands still work.
-    if [[ -n "$real_home" && -d "$real_home/.opencode/commands" ]]; then
-      mkdir -p "$tmp_home/.opencode/commands"
-      cp -a "$real_home/.opencode/commands/." "$tmp_home/.opencode/commands/"
-    fi
-
-    cat > "$tmp_home/.opencode/config.yaml" <<EOF
-providers:
-  openrouter:
-    api_base: "https://openrouter.ai/api/v1"
-    api_key_env: "OPENROUTER_API_KEY"
-    models:
-      - id: "${model_id}"
-        name: "${model_id}"
-
-agents:
-  title:
-    provider: "openrouter"
-    model: "${model_id}"
-  coder:
-    provider: "openrouter"
-    model: "${model_id}"
-  task:
-    provider: "openrouter"
-    model: "${model_id}"
-EOF
-
     cd "$target_dir"
-    HOME="$tmp_home" opencode \
-      -q \
-      -p "$prompt" \
+    opencode \
+      --model "openrouter/$model_id" \
+      run "$prompt" \
       2>&1 | tee "$log_file"
   )
 }
@@ -223,9 +186,7 @@ run_codex() {
   local model_id="$1"
   local prompt="$2"
   local log_file="$3"
-  local target_dir="$4"
 
-  cd "$target_dir"
   codex exec \
     --model "$model_id" \
     --full-auto \
@@ -265,6 +226,19 @@ run_benchmark() {
 
   local start_time
   start_time=$(date +%s)
+
+  # Dry-run mode: print the prompt and exit
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    log_info "DRY RUN — prompt that would be sent to ${harness}:"
+    echo ""
+    echo "────────────────────────────────────────────────────────────"
+    echo "$audit_prompt"
+    echo "────────────────────────────────────────────────────────────"
+    echo ""
+    log_info "Report would be written to: ${report_path}"
+    log_info "Log would be written to: ${log_file}"
+    return 0
+  fi
 
   # Dispatch to harness
   log_info "Invoking ${harness}..."

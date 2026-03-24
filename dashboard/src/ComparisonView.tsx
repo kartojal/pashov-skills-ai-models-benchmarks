@@ -225,10 +225,20 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
       x: {
         ticks: {
           color: "#ccc",
-          font: { size: isMobile ? 9 : 12 },
+          font: { size: isMobile ? 8 : 11 },
           maxRotation: 0,
           minRotation: 0,
           autoSkip: false,
+          padding: 4,
+          callback: function (_value: unknown, index: number, _ticks: unknown[]) {
+            const labelSet = (this as any).chart.data.labels;
+            const label = labelSet?.[index];
+            return label;
+          },
+        },
+        afterFit(axis: any) {
+          // Add extra height to accommodate staggered labels
+          axis.paddingBottom = (axis.paddingBottom || 0) + 14;
         },
         grid: { color: "#1a1a2e" },
       },
@@ -236,6 +246,51 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         ticks: { color: "#888", stepSize: 1 },
         grid: { color: "#1a1a2e" },
       },
+    },
+    layout: {
+      padding: { bottom: 16 },
+    },
+  };
+
+  // Plugin to stagger even-indexed x-axis tick labels downward
+  const staggerLabelsPlugin = {
+    id: "staggerLabels",
+    afterDraw(chart: any) {
+      const xAxis = chart.scales?.x;
+      if (!xAxis) return;
+      const ticks = xAxis.ticks;
+      if (!ticks || ticks.length === 0) return;
+
+      const ctx = chart.ctx;
+      ctx.save();
+
+      ticks.forEach((_tick: any, i: number) => {
+        if (i % 2 !== 1) return; // only shift odd-indexed (0-based) labels
+        const x = xAxis.getPixelForTick(i);
+        const label = chart.data.labels?.[i];
+        if (!label) return;
+
+        const lines = Array.isArray(label) ? label : [label];
+        const fontSize = isMobile ? 8 : 11;
+        const lineHeight = fontSize + 3;
+        const yBase = xAxis.bottom + 4;
+
+        // Clear original label area for this tick
+        const labelWidth = 90;
+        ctx.fillStyle = "#0a0a14";
+        ctx.fillRect(x - labelWidth / 2, yBase - 2, labelWidth, lineHeight * lines.length + 16);
+
+        // Draw label shifted down
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        ctx.font = `${fontSize}px sans-serif`;
+        ctx.fillStyle = "#ccc";
+        lines.forEach((line: string, li: number) => {
+          ctx.fillText(line, x, yBase + 12 + li * lineHeight);
+        });
+      });
+
+      ctx.restore();
     },
   };
 
@@ -349,7 +404,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             Findings by Severity
           </h3>
           <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
-            <Bar data={severityData} options={stackedOptions as any} />
+            <Bar data={severityData} options={stackedOptions as any} plugins={[staggerLabelsPlugin]} />
           </div>
         </div>
 
@@ -359,7 +414,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             Audit Duration (seconds)
           </h3>
           <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
-            <Bar data={durationData} options={chartOptions as any} />
+            <Bar data={durationData} options={chartOptions as any} plugins={[staggerLabelsPlugin]} />
           </div>
         </div>
 
@@ -369,7 +424,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             Fidelity vs Human Audit ({humanFindings.length} findings)
           </h3>
           <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
-            <Bar data={fidelityData} options={chartOptions as any} />
+            <Bar data={fidelityData} options={chartOptions as any} plugins={[staggerLabelsPlugin]} />
           </div>
         </div>
       </div>

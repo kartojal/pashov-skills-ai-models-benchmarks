@@ -7,6 +7,7 @@
 #   ./run-all.sh <target-name> --parallel                     # Run all in parallel
 #   ./run-all.sh <target-name> --only claude-code-opus-4.6    # Run specific runner
 #   ./run-all.sh <target-name> --run-id run-1                 # Tag this run
+#   ./run-all.sh <target-name> --dry-run                      # Print prompts, don't run
 
 set -euo pipefail
 
@@ -21,19 +22,21 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-TARGET="${1:?Usage: $0 <target-name> [--parallel] [--only <runner>] [--run-id <id>]}"
+TARGET="${1:?Usage: $0 <target-name> [--parallel] [--only <runner>] [--run-id <id>] [--dry-run]}"
 shift
 
 PARALLEL=false
 ONLY=""
 RUN_ID=""
+export DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --parallel) PARALLEL=true; shift ;;
-    --only)     ONLY="$2"; shift 2 ;;
-    --run-id)   RUN_ID="$2"; shift 2 ;;
-    *)          echo "Unknown option: $1" >&2; exit 1 ;;
+    --parallel)  PARALLEL=true; shift ;;
+    --only)      ONLY="$2"; shift 2 ;;
+    --run-id)    RUN_ID="$2"; shift 2 ;;
+    --dry-run)   DRY_RUN=true; shift ;;
+    *)           echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
 
@@ -41,7 +44,6 @@ done
 RUNNERS=(
   "claude-code-opus-4.6"
   "claude-code-sonnet-4.6"
-  "opencode-claude-opus-4.6"
   "opencode-gemini-3.1-pro"
   "codex-gpt-5.4"
   "opencode-mimo-v2-pro"
@@ -65,6 +67,7 @@ echo -e "${CYAN}Target:${NC}   ${TARGET}"
 echo -e "${CYAN}Runners:${NC}  ${#RUNNERS[@]}"
 echo -e "${CYAN}Mode:${NC}     $(if $PARALLEL; then echo "parallel"; else echo "sequential"; fi)"
 [[ -n "$RUN_ID" ]] && echo -e "${CYAN}Run ID:${NC}   ${RUN_ID}"
+[[ "$DRY_RUN" == "true" ]] && echo -e "${YELLOW}Dry run:${NC}  prompts only (no harness invocation)"
 echo ""
 
 # Verify target exists

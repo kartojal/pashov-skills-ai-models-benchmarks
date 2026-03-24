@@ -1,0 +1,98 @@
+{
+  "metadata": {
+    "model": "google/gemini-3.1-pro-preview",
+    "harness": "opencode",
+    "target": "notional-finance",
+    "timestamp": "2026-03-24T18:02:00Z",
+    "duration_seconds": 1140,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 7,
+    "critical": 3,
+    "high": 3,
+    "medium": 1,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Dinero withdraw manager s_batchNonce overflow bricks withdrawals and overlapping batch IDs steal user funds",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Logic Flaw / Arithmetic Overflow",
+      "description": "In `Dinero.sol`, `s_batchNonce` is defined as a `uint16` and is incremented with `++s_batchNonce` on every withdrawal initiation. Once 65,535 withdrawals have occurred, this will revert with an arithmetic overflow, permanently bricking all new withdrawal requests for the Dinero integration. Furthermore, if two users initiate withdrawals close to each other, their `initialBatchId` and `finalBatchId` may overlap. When the first user finalizes their request, the contract iterates over the batch IDs and claims ALL `upxETH` balances currently held by the contract for those batches (`upxETH.balanceOf(address(this), i)`). The first user effectively steals the second user's withdrawal funds, leaving the second user with zero tokens when they attempt to finalize.",
+      "location": { "file": "src/withdraws/Dinero.sol", "lines": "17-64" },
+      "recommendation": "Use a larger integer type (e.g., `uint32` or `uint64`) for `s_batchNonce` and use `unchecked` if wrap-around is intended. To prevent fund stealing, track the exact amount of `upxETH` owed to each specific withdrawal request rather than claiming the contract's entire balance for a batch ID.",
+      "agents_reporting": ["opencode-gemini"]
+    },
+    {
+      "id": "F-002",
+      "title": "Ethena withdraw manager permanently locks funds when cooldownDuration is zero",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Integration / Logic Flaw",
+      "description": "In `Ethena.sol`, when `sUSDe.cooldownDuration()` is 0, the `_startCooldown` function immediately redeems `sUSDe` to `USDe` on the `EthenaCooldownHolder` contract. When the user later calls `finalizeAndRedeemWithdrawRequest`, `_finalizeCooldown` is triggered. Since `userCooldown.cooldownEnd` is 0, `sUSDe.unstake` is skipped. The function then calculates `tokensClaimed = balanceAfter - balanceBefore`. Because the `USDe` tokens were already transferred to the holder during initiation, `balanceAfter` exactly equals `balanceBefore`, resulting in `tokensClaimed = 0`. The actual `USDe` tokens remain permanently stuck in the `EthenaCooldownHolder` contract and the user receives nothing.",
+      "location": { "file": "src/withdraws/Ethena.sol", "lines": "15-40" },
+      "recommendation": "Track the amount of `USDe` received during `_startCooldown` when `duration == 0` and transfer that specific amount during `_finalizeCooldown`, rather than relying on the `balanceAfter - balanceBefore` difference which will evaluate to zero.",
+      "agents_reporting": ["opencode-gemini"]
+    },
+    {
+      "id": "F-003",
+      "title": "Reward claims are permanently lost due to overwritten storage by stale memory state",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "State Management / Data Corruption",
+      "description": "In `AbstractRewardManager.sol`, `updateAccountRewards` loads the vault reward state into a memory array (`VaultRewardState[] memory state = _getVaultRewardStateSlot()`). It then calls `_claimVaultRewards(..., state)` to claim rewards from external protocols. However, the `RewardManagerMixin` and `ConvexRewardManager` contracts override `_claimVaultRewards` to call `super._claimVaultRewards(..., _getVaultRewardStateSlot())`, explicitly IGNORING the `state` memory array passed as an argument. The internal claim updates the new storage slot properly, but the original `state` memory array held by `updateAccountRewards` remains entirely stale (it lacks the newly claimed rewards). Afterwards, `updateAccountRewards` calls `_accumulateSecondaryRewardViaEmissionRate` using the stale `state[i]`. This function calculates the new emission accumulation based on the stale state and writes the result BACK to storage (`_getVaultRewardStateSlot()[index] = state`), completely overwriting and permanently erasing all the external rewards that were just claimed.",
+      "location": { "file": "src/rewards/AbstractRewardManager.sol", "lines": "147-172" },
+      "recommendation": "In `RewardManagerMixin` and `ConvexRewardManager`, pass the provided `state` array to `super._claimVaultRewards` instead of invoking `_getVaultRewardStateSlot()` again. This ensures that the memory array remains up to date and isn't overwritten by stale data later in the execution flow.",
+      "agents_reporting": ["opencode-gemini"]
+    },
+    {
+      "id": "F-004",
+      "title": "Direct Morpho borrowing bypasses pending withdrawal value, allowing over-borrowing",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Oracle Manipulation / Integration Flaw",
+      "description": "Morpho Blue has no access control, allowing users to call `borrow()` or `withdrawCollateral()` directly. When doing so, Morpho calls `IOracle.price()` on the YieldStrategy vault. Because the call bypasses the router, the transient storage variable `t_CurrentAccount` is unset (`address(0)`). Consequently, `convertToAssets()` skips `_isWithdrawRequestPending()` and falls back to `super.convertToAssets(shares)`, returning the standard (higher) yield-earning token value. If an attacker has a pending withdrawal request that has lost value (e.g., entered an LST withdrawal queue, accrued slashing penalties, or forfeited yield), they can bypass the router and call Morpho directly. Morpho will overvalue their escrowed shares at the standard yield rate, allowing the attacker to borrow more than their collateral is actually worth.",
+      "location": { "file": "src/AbstractYieldStrategy.sol", "lines": "124-133" },
+      "recommendation": "The design of using transient storage (`t_CurrentAccount`) to alter the global oracle price in Morpho is fundamentally unsafe since Morpho evaluates collateral globally. Escrowed shares must be physically separated from Morpho collateral, or the protocol must ensure that pending withdrawals cannot be used as collateral to bypass valuation penalties.",
+      "agents_reporting": ["opencode-gemini"]
+    },
+    {
+      "id": "F-005",
+      "title": "Curve LP strategies do not handle Native ETH (address(0)) correctly for WRM lookups",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Integration / Error Handling",
+      "description": "In `AbstractSingleSidedLP.sol`, Curve pools frequently represent Native ETH as `address(0)`. When interacting with these pools, the contract loops through `TOKENS()` and calls `ADDRESS_REGISTRY.getWithdrawRequestManager(address(tokens[i]))`. For Native ETH (`address(0)`), this registry lookup returns `address(0)` because the WithdrawRequestManager is registered under `WETH`, not `address(0)`. During `initiateWithdraw` and `getWithdrawRequestValue`, the strategy makes a direct external call to this `address(0)` manager (e.g., `manager.initiateWithdraw(...)` and `manager.getWithdrawRequestValue(...)`). In Solidity 0.8+, calling an address with no code that expects a return value will revert. This permanently bricks withdrawals, oracle pricing, and liquidations for any strategy integrating with a Curve pool that uses Native ETH.",
+      "location": { "file": "src/single-sided-lp/AbstractSingleSidedLP.sol", "lines": "319-380" },
+      "recommendation": "When iterating over `TOKENS()`, explicitly check if the token is `address(0)` and substitute it with the `WETH` address before performing WithdrawRequestManager registry lookups or comparisons.",
+      "agents_reporting": ["opencode-gemini"]
+    },
+    {
+      "id": "F-006",
+      "title": "Zero exit balances from Curve pools cause getWithdrawRequestValue to revert, bricking liquidations",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Logic Flaw / Denial of Service",
+      "description": "In `AbstractSingleSidedLP.sol`, when a user calls `initiateWithdraw`, the contract removes liquidity from Curve proportionally. If the pool is highly imbalanced or the user has a dust position, `exitBalances[i]` for one of the tokens may round to 0. In this case, the loop uses `continue`, intentionally skipping the creation of a WithdrawRequest for that specific token. However, when Morpho or the router subsequently calls `price()` or `healthFactor()`, the `getWithdrawRequestValue` function loops over all tokens and requires that a request exists (`require(hasRequest)`). Since the request was never created for the token with a 0 balance, this require statement reverts. This permanently bricks `price()` for the affected account, making it impossible to liquidate their position or calculate their health factor.",
+      "location": { "file": "src/single-sided-lp/AbstractSingleSidedLP.sol", "lines": "319-380" },
+      "recommendation": "Do not revert with `require(hasRequest)` if the expected withdrawal value for that token is naturally zero, or ensure that a dummy withdraw request is created even for zero balances to maintain the expected state machine invariants.",
+      "agents_reporting": ["opencode-gemini"]
+    },
+    {
+      "id": "F-007",
+      "title": "Fully liquidated accounts lose accrued but unclaimed rewards",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Logic Flaw / Reward Loss",
+      "description": "In `AbstractRewardManager.sol`, the `updateAccountRewards` function is called during liquidations. If a user is fully liquidated (`accountSharesAfter == 0`) while their shares are in escrow (`sharesInEscrow == true`), the function executes a block that simply deletes their `AccountRewardDebtSlot` and continues to the next token, bypassing the `_claimRewardToken` distribution entirely. This means that any rewards the user had legitimately accrued prior to being liquidated are permanently deleted and lost, rather than being paid out to them.",
+      "location": { "file": "src/rewards/AbstractRewardManager.sol", "lines": "156-160" },
+      "recommendation": "Ensure that accrued-but-unclaimed rewards are distributed to the user via `_claimRewardToken` before clearing their reward debt, even if they are being fully liquidated.",
+      "agents_reporting": ["opencode-gemini"]
+    }
+  ],
+  "raw_output": "Security audit completed successfully using the solidity-auditor skill flow. Key vulnerabilities found in withdrawal flows, Morpho direct integration, and reward accounting."
+}

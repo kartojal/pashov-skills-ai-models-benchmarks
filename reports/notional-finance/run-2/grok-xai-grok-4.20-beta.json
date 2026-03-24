@@ -1,0 +1,54 @@
+{
+  "metadata": {
+    "model": "minimax/minimax-m2.7",
+    "harness": "opencode",
+    "target": "notional-finance",
+    "timestamp": "2026-03-24T17:59:57Z",
+    "duration_seconds": 29,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 3,
+    "critical": 1,
+    "high": 1,
+    "medium": 1,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Dinero Batch Nonce Overflow Bricks All Future Withdrawals",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Denial of Service",
+      "description": "s_batchNonce is uint16. After 65535 withdrawals, ++s_batchNonce overflows/reverts in _initiateWithdrawImpl. All future Dinero withdrawals become impossible. Matches INTEGRATIONS_CONTEXT.md Section 7.4 and 9.5. Impacts pxETH/apxETH vaults.",
+      "location": { "file": "src/withdraws/Dinero.sol", "lines": "10,32" },
+      "recommendation": "Use uint256 or uint32 for s_batchNonce. Remove the overflow risk or use a different uniqueness mechanism that does not rely on incrementing nonce.",
+      "agents_reporting": ["opencode"]
+    },
+    {
+      "id": "F-002",
+      "title": "Ethena Cooldown=0 Causes Incorrect Balance Diff in finalize",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Loss of User Funds",
+      "description": "When cooldownDuration() == 0, _startCooldown immediately redeems sUSDe to USDe. Then _finalizeCooldown's balanceAfter - balanceBefore == 0 (USDe already claimed), so tokensClaimed=0 and funds are permanently locked in holder. See INTEGRATIONS_CONTEXT.md Section 7.5 and 9.6.",
+      "location": { "file": "src/withdraws/Ethena.sol", "lines": "18-20,39-47" },
+      "recommendation": "In EthenaCooldownHolder._finalizeCooldown, handle cooldownDuration==0 case separately by checking if balanceBefore > 0 or using a different accounting method. Or track claimed amount separately during initiation.",
+      "agents_reporting": ["opencode"]
+    },
+    {
+      "id": "F-003",
+      "title": "price() Function Does Not Respect t_CurrentAccount for Pending Withdraws When Called Directly by Morpho",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Oracle Manipulation / Incorrect Valuation",
+      "description": "When Morpho calls vault.price(borrower) directly (bypassing router), t_CurrentAccount is not set reliably. The price() override sets it temporarily but convertToAssets may not properly use getWithdrawRequestValue for escrowed shares if called via super path. Leads to incorrect healthFactor and borrowing capacity. See INTEGRATIONS_CONTEXT.md Sections 0.2 and 9.1.",
+      "location": { "file": "src/AbstractYieldStrategy.sol", "lines": "118-133" },
+      "recommendation": "Ensure price(address) always routes through withdraw-aware valuation when t_CurrentAccount has pending withdraw. Add explicit check in convertToAssets for escrowed shares.",
+      "agents_reporting": ["opencode"]
+    }
+  ],
+  "raw_output": "=== Notional Finance Leveraged Vault Audit (opencode) ===\n\n**Critical:**\nF-002: Ethena cooldown=0 path locks user funds due to balance diff after immediate redeem.\n\n**High:**\nF-001: Dinero uint16 batch nonce will overflow after ~65k withdrawals, bricking redemptions.\n\n**Medium:**\nF-003: Oracle price() does not consistently handle t_CurrentAccount fallback for Morpho direct calls on pending withdraw accounts.\n\nAll other priority areas (ETH/WETH, reward accounting, rounding, trade params) had no critical exploitable issues within audit focus (after reviewing INTEGRATIONS_CONTEXT.md targeted questions 1-20).\n\nTotal duration: 29 seconds."
+}
