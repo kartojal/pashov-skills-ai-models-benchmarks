@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import type { Report, Finding } from "./types";
 import { getModelLogo } from "./modelLogos";
+import { getMatchedFindingIds } from "./findingMatcher";
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: "#ef4444",
@@ -37,6 +38,14 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
   const activeReport = selectedModel
     ? reports.find((r) => r.metadata.model === selectedModel)
     : null;
+
+  const humanReport = reports.find((r) => r.metadata.model === "human");
+  const humanFindings = humanReport?.findings ?? [];
+
+  const matchedIds = useMemo(() => {
+    if (!activeReport || humanFindings.length === 0) return new Set<string>();
+    return getMatchedFindingIds(activeReport.findings, humanFindings);
+  }, [activeReport, humanFindings]);
 
   return (
     <div className="detail-layout">
@@ -299,6 +308,7 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
                     key={finding.id}
                     finding={finding}
                     expanded={expandedFinding === finding.id}
+                    isHumanMatch={matchedIds.has(finding.id)}
                     onToggle={() =>
                       setExpandedFinding(
                         expandedFinding === finding.id ? null : finding.id
@@ -317,10 +327,12 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
 function FindingCard({
   finding,
   expanded,
+  isHumanMatch,
   onToggle,
 }: {
   finding: Finding;
   expanded: boolean;
+  isHumanMatch: boolean;
   onToggle: () => void;
 }) {
   return (
@@ -415,6 +427,22 @@ function FindingCard({
         >
           {finding.category}
         </span>
+        {isHumanMatch && (
+          <span
+            style={{
+              padding: "2px 8px",
+              borderRadius: 6,
+              fontSize: 10,
+              fontWeight: 700,
+              background: "#22c55e20",
+              color: "#22c55e",
+              border: "1px solid #22c55e30",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Human AI Match
+          </span>
+        )}
         <span
           style={{
             fontSize: 16,
