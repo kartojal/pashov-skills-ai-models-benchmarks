@@ -7,7 +7,7 @@ import { AggregatedFindingsView } from "./AggregatedFindingsView";
 import "./responsive.css";
 
 const reports = reportsData as ReportsMap;
-const targets = Object.keys(reports);
+const targets = Object.keys(reports).filter((t) => t !== "notional-finance");
 
 function parseHash(): { target?: string; tab?: string; model?: string } {
   const params = new URLSearchParams(window.location.hash.slice(1));
