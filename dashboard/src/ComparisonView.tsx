@@ -140,7 +140,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         },
         afterFit(axis: any) {
           // Add extra height to accommodate staggered labels
-          axis.paddingBottom = (axis.paddingBottom || 0) + 14;
+          axis.paddingBottom = (axis.paddingBottom || 0) + (isMobile ? 28 : 14);
         },
         grid: { color: "#1a1a2e" },
       },
@@ -150,7 +150,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
       },
     },
     layout: {
-      padding: { bottom: 16 },
+      padding: { bottom: isMobile ? 28 : 16 },
     },
   };
 
@@ -176,11 +176,12 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         const fontSize = isMobile ? 8 : 11;
         const lineHeight = fontSize + 3;
         const yBase = xAxis.bottom + 4;
+        const staggerOffset = isMobile ? 36 : 26;
 
         // Clear original label area for this tick
         const labelWidth = 90;
         ctx.fillStyle = "#0a0a14";
-        ctx.fillRect(x - labelWidth / 2, yBase - 2, labelWidth, lineHeight * lines.length + 16);
+        ctx.fillRect(x - labelWidth / 2, yBase - 2, labelWidth, lineHeight * lines.length + staggerOffset + 4);
 
         // Draw label shifted down
         ctx.textAlign = "center";
@@ -188,7 +189,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         ctx.font = `${fontSize}px sans-serif`;
         ctx.fillStyle = "#ccc";
         lines.forEach((line: string, li: number) => {
-          ctx.fillText(line, x, yBase + 26 + li * lineHeight);
+          ctx.fillText(line, x, yBase + staggerOffset + li * lineHeight);
         });
       });
 
