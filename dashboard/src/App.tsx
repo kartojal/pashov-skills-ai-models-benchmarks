@@ -102,28 +102,74 @@ export function App() {
               Pashov Skills &times; AI Models Comparison
             </p>
           </div>
-          <div className="target-buttons" style={{ display: "flex", gap: 8 }}>
-            {targets.map((t) => (
-              <button
-                key={t}
-                onClick={() => setActiveTarget(t)}
-                style={{
-                  padding: "8px 16px",
-                  borderRadius: 8,
-                  border:
-                    t === activeTarget
-                      ? "1px solid #6366f1"
-                      : "1px solid #2a2a4a",
-                  background: t === activeTarget ? "#6366f120" : "transparent",
-                  color: t === activeTarget ? "#a5b4fc" : "#8888aa",
-                  cursor: "pointer",
-                  fontSize: 13,
-                  fontWeight: 500,
-                }}
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <div className="target-buttons" style={{ display: "flex", gap: 8 }}>
+              {targets.map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setActiveTarget(t)}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: 8,
+                    border:
+                      t === activeTarget
+                        ? "1px solid #6366f1"
+                        : "1px solid #2a2a4a",
+                    background: t === activeTarget ? "#6366f120" : "transparent",
+                    color: t === activeTarget ? "#a5b4fc" : "#8888aa",
+                    cursor: "pointer",
+                    fontSize: 13,
+                    fontWeight: 500,
+                  }}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <a
+                href="https://x.com/pashov"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="@pashov"
               >
-                {t}
-              </button>
-            ))}
+                <img
+                  src="https://avatars.githubusercontent.com/u/32573397?v=4"
+                  alt="Pashov"
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: "50%",
+                    border: "2px solid #2a2a4a",
+                    objectFit: "cover",
+                    transition: "border-color 0.2s",
+                  }}
+                  onMouseOver={(e) => (e.currentTarget.style.borderColor = "#6366f1")}
+                  onMouseOut={(e) => (e.currentTarget.style.borderColor = "#2a2a4a")}
+                />
+              </a>
+              <a
+                href="https://x.com/kartojal"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="@kartojal"
+              >
+                <img
+                  src="https://avatars.githubusercontent.com/u/11179847?v=4"
+                  alt="Kartojal"
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: "50%",
+                    border: "2px solid #2a2a4a",
+                    objectFit: "cover",
+                    transition: "border-color 0.2s",
+                  }}
+                  onMouseOver={(e) => (e.currentTarget.style.borderColor = "#6366f1")}
+                  onMouseOut={(e) => (e.currentTarget.style.borderColor = "#2a2a4a")}
+                />
+              </a>
+            </div>
           </div>
         </div>
       </header>
