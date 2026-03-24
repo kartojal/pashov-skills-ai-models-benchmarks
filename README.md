@@ -1,6 +1,8 @@
-# Security Audit Skills Benchmark
+# Security Audit Pashov Skills Benchmark
 
-Benchmark comparing AI models + AI coding tools for Solidity smart contract security auditing using [Pashov Skills](https://github.com/pashov/skills).
+Benchmark comparing AI models + AI coding tools VS human AI reports for Solidity smart contract security auditing using [Pashov Skills](https://github.com/pashov/skills).
+
+AI credits sponsored by [Pashov](https://x.com/pashov)⭐️
 
 ## Overview
 
@@ -8,19 +10,18 @@ This benchmark runs the **pashov/skills solidity-auditor** skill across multiple
 
 Each runner invokes its harness CLI directly (no orchestrator needed).
 
+It can also compare an human ai audit or public competitions against ai models to see if AI models can match expert human auditors.
+
 ## Models & Harnesses
 
 | Harness | Model | Runner Script |
 |---------|-------|---------------|
 | Claude Code | Claude Opus 4.6 | `ai-runners/claude-code-opus-4.6.sh` |
 | Claude Code | Claude Sonnet 4.6 | `ai-runners/claude-code-sonnet-4.6.sh` |
-| OpenCode | Claude Opus 4.6 | `ai-runners/opencode-claude-opus-4.6.sh` |
 | OpenCode | Google Gemini 3.1 Pro | `ai-runners/opencode-gemini-3.1-pro.sh` |
 | Codex | OpenAI GPT 5.4 | `ai-runners/codex-gpt-5.4.sh` |
-| OpenCode | Xiaomi MiMo v2 Pro | `ai-runners/opencode-mimo-v2-pro.sh` |
 | OpenCode | MiniMax M2.7 | `ai-runners/opencode-minimax-m2.7.sh` |
-| OpenCode | Qwen 3.5 9B | `ai-runners/opencode-qwen3.5-9b.sh` |
-| OpenCode | Qwen 3.5 27B | `ai-runners/opencode-qwen3.5-27b.sh` |
+| OpenCode | Qwen 3.5 Plus | `ai-runners/opencode-qwen3.5-plus.sh` |
 | OpenCode | xAI Grok 4.20 Beta | `ai-runners/opencode-grok-4.20-beta.sh` |
 
 ## Prerequisites
@@ -66,17 +67,6 @@ Open http://localhost:5173 to view the comparison dashboard.
 ```
 security-audit-skills-benchmark/
 ├── ai-runners/              # One bash script per model+harness combo
-│   ├── _common.sh           # Shared utilities (prompt building, harness dispatch)
-│   ├── claude-code-opus-4.6.sh
-│   ├── claude-code-sonnet-4.6.sh
-│   ├── opencode-claude-opus-4.6.sh
-│   ├── opencode-gemini-3.1-pro.sh
-│   ├── codex-gpt-5.4.sh
-│   ├── opencode-mimo-v2-pro.sh
-│   ├── opencode-minimax-m2.7.sh
-│   ├── opencode-qwen3.5-9b.sh
-│   ├── opencode-qwen3.5-27b.sh
-│   └── opencode-grok-4.20-beta.sh
 ├── targets/                 # Smart contract codebases to audit
 │   └── notional-finance/
 │       ├── repo/            # Solidity source code
@@ -134,11 +124,6 @@ Each benchmark run produces a JSON report conforming to `report-schema.json`:
   "raw_output": "..."
 }
 ```
-
-## Targets
-
-### Notional Finance
-Leveraged vault strategies for Notional V3 — includes yield strategies, staking, withdraw request managers, oracles, reward managers, routers, and proxy contracts. Integrates with Morpho Blue, Curve, and Pendle V2.
 
 ## License
 
