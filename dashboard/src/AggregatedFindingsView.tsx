@@ -128,7 +128,6 @@ export function AggregatedFindingsView({ reports }: Props) {
   const aggregated = useMemo(() => aggregateFindings(reports), [reports]);
 
   const humanReport = reports.find((r) => r.metadata.model === "human");
-  const aiReportCount = reports.filter((r) => r.metadata.model !== "human").length;
 
   const severityCounts = useMemo(() => {
     const counts: Record<string, number> = {
@@ -150,6 +149,25 @@ export function AggregatedFindingsView({ reports }: Props) {
 
   const humanMatchCount = aggregated.filter((a) => a.humanMatch).length;
 
+  const humanHighMatchCount = useMemo(() => {
+    if (!humanReport) return 0;
+    const humanHighFindings = humanReport.findings.filter((f) => f.severity === "high");
+    let matched = 0;
+    for (const hf of humanHighFindings) {
+      const hasAiMatch = aggregated.some(
+        (a) =>
+          ["medium", "high", "critical"].includes(a.finding.severity) &&
+          matchScore(a.finding, hf) >= MATCH_THRESHOLD
+      );
+      if (hasAiMatch) matched++;
+    }
+    return matched;
+  }, [aggregated, humanReport]);
+
+  const humanHighTotal = humanReport
+    ? humanReport.findings.filter((f) => f.severity === "high").length
+    : 0;
+
   return (
     <div>
       {/* Summary cards */}
@@ -157,13 +175,12 @@ export function AggregatedFindingsView({ reports }: Props) {
         className="score-cards"
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
+          gridTemplateColumns: "repeat(3, 1fr)",
           gap: 16,
           marginBottom: 24,
         }}
       >
         <SummaryCard label="Unique Findings" value={aggregated.length} />
-        <SummaryCard label="Models Analyzed" value={aiReportCount} />
         <SummaryCard
           label="Human Matches"
           value={
@@ -173,8 +190,12 @@ export function AggregatedFindingsView({ reports }: Props) {
           }
         />
         <SummaryCard
-          label="Multi-Model Findings"
-          value={aggregated.filter((a) => a.models.length > 1).length}
+          label="Human High Matches"
+          value={
+            humanReport
+              ? `${humanHighMatchCount} / ${humanHighTotal}`
+              : "N/A"
+          }
         />
       </div>
 
