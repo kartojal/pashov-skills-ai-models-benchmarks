@@ -1,0 +1,142 @@
+/* Responsive styles for mobile (max-width: 768px) */
+
+/* Summary cards: 2 columns on mobile, 4 on desktop */
+.score-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+@media (max-width: 768px) {
+  .score-cards-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .score-cards-grid .score-card {
+    padding: 14px 16px;
+  }
+  .score-cards-grid .score-card .card-value {
+    font-size: 18px;
+  }
+}
+
+/* Charts grid: 1 column on mobile */
+.charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+@media (max-width: 768px) {
+  .charts-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+}
+
+/* Radar chart needs more height on mobile */
+@media (max-width: 768px) {
+  .radar-chart-container {
+    height: 360px !important;
+  }
+  .bar-chart-container {
+    height: 280px !important;
+  }
+}
+
+/* Leaderboard: horizontal scroll on mobile */
+.leaderboard-wrapper {
+  overflow: visible;
+}
+@media (max-width: 768px) {
+  .leaderboard-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .leaderboard-wrapper table {
+    min-width: 900px;
+  }
+}
+
+/* Detail view: stack sidebar above findings on mobile */
+.detail-layout {
+  display: flex;
+  gap: 20px;
+}
+@media (max-width: 768px) {
+  .detail-layout {
+    flex-direction: column;
+    gap: 14px;
+  }
+  .detail-sidebar {
+    width: 100% !important;
+  }
+  .detail-sidebar .model-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+  }
+  .detail-sidebar .model-list button {
+    flex: 1 1 auto;
+    min-width: 140px;
+    border-left: none !important;
+    border-bottom: 3px solid transparent;
+  }
+  .detail-sidebar .model-list button.active {
+    border-bottom-color: #6366f1 !important;
+  }
+}
+
+/* Finding card: stack info on mobile */
+@media (max-width: 768px) {
+  .finding-header {
+    flex-wrap: wrap;
+    gap: 6px !important;
+    padding: 10px 14px !important;
+  }
+  .finding-header .finding-title {
+    width: 100%;
+    order: -1;
+    font-size: 13px !important;
+  }
+  .finding-header .finding-category {
+    display: none;
+  }
+}
+
+/* Severity filter buttons: wrap on mobile */
+@media (max-width: 768px) {
+  .severity-filters {
+    flex-wrap: wrap;
+    gap: 4px !important;
+  }
+  .severity-summary-pills {
+    flex-wrap: wrap;
+    gap: 8px !important;
+  }
+}
+
+/* Header: stack on mobile */
+@media (max-width: 768px) {
+  .app-header {
+    padding: 14px 16px !important;
+  }
+  .app-header-inner {
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start !important;
+  }
+  .app-header h1 {
+    font-size: 18px !important;
+  }
+  .target-buttons {
+    flex-wrap: wrap;
+    gap: 6px !important;
+  }
+  .tab-bar {
+    padding: 10px 16px 0 !important;
+  }
+  .main-content {
+    padding: 16px !important;
+  }
+}

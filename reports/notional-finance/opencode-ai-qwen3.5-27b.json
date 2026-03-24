@@ -1,0 +1,181 @@
+{
+  "metadata": {
+    "model": "qwen/qwen3.5-27b",
+    "harness": "opencode",
+    "target": "notional-finance",
+    "timestamp": "2026-03-23T21:59:16.941562+00:00",
+    "duration_seconds": 988,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 10,
+    "critical": 0,
+    "high": 3,
+    "medium": 7,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Reentrancy in AbstractYieldStrategy.collectFees",
+      "severity": "high",
+      "confidence": "high",
+      "category": "reentrancy",
+      "description": "The collectFees function in AbstractYieldStrategy.sol is not protected by the nonReentrant modifier. It calls _transferYieldTokenToOwner which transfers yield tokens to the fee receiver. If the fee receiver is a contract, it could reenter collectFees or other functions before the state is updated, potentially draining funds or manipulating accrued fees.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "130-135"
+      },
+      "recommendation": "Add the nonReentrant modifier to the collectFees function to prevent reentrancy attacks.",
+      "agents_reporting": [
+        "opencode-qwen3.5-27b"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "Reentrancy in AbstractWithdrawRequestManager.stakeTokens",
+      "severity": "high",
+      "confidence": "high",
+      "category": "reentrancy",
+      "description": "The stakeTokens function in AbstractWithdrawRequestManager.sol transfers yield tokens to the msg.sender after staking. If the msg.sender is a contract, it could reenter stakeTokens or other functions before the state is updated, potentially allowing double staking or manipulation of yield token balances.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "105-115"
+      },
+      "recommendation": "Add the nonReentrant modifier to the stakeTokens function or ensure that the transfer happens after all state updates are complete.",
+      "agents_reporting": [
+        "opencode-qwen3.5-27b"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "Reentrancy in RewardManagerMixin.fallback",
+      "severity": "high",
+      "confidence": "high",
+      "category": "reentrancy",
+      "description": "The fallback function in RewardManagerMixin.sol delegates calls to the REWARD_MANAGER contract. If the REWARD_MANAGER contract calls back into the vault, it could bypass nonReentrant checks on public functions, potentially allowing reentrancy attacks.",
+      "location": {
+        "file": "src/rewards/RewardManagerMixin.sol",
+        "lines": "130-140"
+      },
+      "recommendation": "Ensure that the fallback function does not allow reentrancy by checking the context or using a reentrancy guard.",
+      "agents_reporting": [
+        "opencode-qwen3.5-27b"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "Integer Overflow in AbstractYieldStrategy.effectiveSupply",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "integer-overflow",
+      "description": "The effectiveSupply function in AbstractYieldStrategy.sol subtracts s_escrowedShares from totalSupply. If s_escrowedShares is greater than totalSupply, an underflow will occur, leading to incorrect supply calculations and potential fund loss.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "105-107"
+      },
+      "recommendation": "Add a check to ensure that s_escrowedShares is less than or equal to totalSupply before subtraction.",
+      "agents_reporting": [
+        "opencode-qwen3.5-27b"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "Logic Error in AbstractYieldStrategy.convertYieldTokenToAsset",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "logic-error",
+      "description": "The convertYieldTokenToAsset function in AbstractYieldStrategy.sol casts an int256 rate to uint256. If the rate is negative, an underflow will occur, leading to incorrect price calculations and potential fund loss.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "115-119"
+      },
+      "recommendation": "Add a check to ensure that the rate is non-negative before casting to uint256.",
+      "agents_reporting": [
+        "opencode-qwen3.5-27b"
+      ]
+    },
+    {
+      "id": "F-006",
+      "title": "Logic Error in AbstractYieldStrategy._accrueFees",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "logic-error",
+      "description": "The _accrueFees function in AbstractYieldStrategy.sol sets s_lastFeeAccrualTime to uint32(block.timestamp). If the block timestamp exceeds the maximum value of uint32, an overflow will occur, leading to incorrect fee calculations.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "145-148"
+      },
+      "recommendation": "Use a larger data type for s_lastFeeAccrualTime or add a check to ensure that block.timestamp does not exceed the maximum value of uint32.",
+      "agents_reporting": [
+        "opencode-qwen3.5-27b"
+      ]
+    },
+    {
+      "id": "F-007",
+      "title": "Logic Error in AbstractYieldStrategy._calculateAdditionalFeesInYieldToken",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "logic-error",
+      "description": "The _calculateAdditionalFeesInYieldToken function in AbstractYieldStrategy.sol uses a Taylor approximation to calculate e^x. If x is large, the approximation may be inaccurate, leading to incorrect fee calculations.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "137-143"
+      },
+      "recommendation": "Use a more accurate method to calculate e^x or add a check to ensure that x is within a reasonable range.",
+      "agents_reporting": [
+        "opencode-qwen3.5-27b"
+      ]
+    },
+    {
+      "id": "F-008",
+      "title": "Logic Error in AbstractYieldStrategy._update",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "logic-error",
+      "description": "The _update function in AbstractYieldStrategy.sol deletes t_AllowTransfer_To and t_AllowTransfer_Amount after a transfer. If the transfer fails, the transient variables will still be deleted, potentially preventing future transfers.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "155-165"
+      },
+      "recommendation": "Ensure that the transient variables are only deleted after a successful transfer.",
+      "agents_reporting": [
+        "opencode-qwen3.5-27b"
+      ]
+    },
+    {
+      "id": "F-009",
+      "title": "Logic Error in AbstractYieldStrategy.mintShares",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "logic-error",
+      "description": "The mintShares function in AbstractYieldStrategy.sol sets t_AllowTransfer_To and t_AllowTransfer_Amount before transferring shares. If the transfer fails, the transient variables will still be set, potentially allowing unauthorized transfers.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "175-185"
+      },
+      "recommendation": "Ensure that the transient variables are only set after a successful transfer.",
+      "agents_reporting": [
+        "opencode-qwen3.5-27b"
+      ]
+    },
+    {
+      "id": "F-010",
+      "title": "Logic Error in AbstractYieldStrategy.burnShares",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "logic-error",
+      "description": "The burnShares function in AbstractYieldStrategy.sol transfers assets to the lending router after burning shares. If the transfer fails, the shares will still be burned, potentially leading to fund loss.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "187-195"
+      },
+      "recommendation": "Ensure that the transfer happens before burning shares or add a check to ensure that the transfer is successful.",
+      "agents_reporting": [
+        "opencode-qwen3.5-27b"
+      ]
+    }
+  ],
+  "raw_output": "{\n  \"findings\": [\n    {\n      \"title\": \"Reentrancy in AbstractYieldStrategy.collectFees\",\n      \"severity\": \"high\",\n      \"confidence\": \"high\",\n      \"category\": \"reentrancy\",\n      \"description\": \"The collectFees function in AbstractYieldStrategy.sol is not protected by the nonReentrant modifier. It calls _transferYieldTokenToOwner which transfers yield tokens to the fee receiver. If the fee receiver is a contract, it could reenter collectFees or other functions before the state is updated, potentially draining funds or manipulating accrued fees.\",\n      \"file\": \"src/AbstractYieldStrategy.sol\",\n      \"lines\": \"130-135\",\n      \"recommendation\": \"Add the nonReentrant modifier to the collectFees function to prevent reentrancy attacks.\"\n    },\n    {\n      \"title\": \"Reentrancy in AbstractWithdrawRequestManager.stakeTokens\",\n      \"severity\": \"high\",\n      \"confidence\": \"high\",\n      \"category\": \"reentrancy\",\n      \"description\": \"The stakeTokens function in AbstractWithdrawRequestManager.sol transfers yield tokens to the msg.sender after staking. If the msg.sender is a contract, it could reenter stakeTokens or other functions before the state is updated, potentially allowing double staking or manipulation of yield token balances.\",\n      \"file\": \"src/withdraws/AbstractWithdrawRequestManager.sol\",\n      \"lines\": \"105-115\",\n      \"recommendation\": \"Add the nonReentrant modifier to the stakeTokens function or ensure that the transfer happens after all state updates are complete.\"\n    },\n    {\n      \"title\": \"Reentrancy in RewardManagerMixin.fallback\",\n      \"severity\": \"high\",\n      \"confidence\": \"high\",\n      \"category\": \"reentrancy\",\n      \"description\": \"The fallback function in RewardManagerMixin.sol delegates calls to the REWARD_MANAGER contract. If the REWARD_MANAGER contract calls back into the vault, it could bypass nonReentrant checks on public functions, potentially allowing reentrancy attacks.\",\n      \"file\": \"src/rewards/RewardManagerMixin.sol\",\n      \"lines\": \"130-140\",\n      \"recommendation\": \"Ensure that the fallback function does not allow reentrancy by checking the context or using a reentrancy guard.\"\n    },\n    {\n      \"title\": \"Integer Overflow in AbstractYieldStrategy.effectiveSupply\",\n      \"severity\": \"medium\",\n      \"confidence\": \"high\",\n      \"category\": \"integer-overflow\",\n      \"description\": \"The effectiveSupply function in AbstractYieldStrategy.sol subtracts s_escrowedShares from totalSupply. If s_escrowedShares is greater than totalSupply, an underflow will occur, leading to incorrect supply calculations and potential fund loss.\",\n      \"file\": \"src/AbstractYieldStrategy.sol\",\n      \"lines\": \"105-107\",\n      \"recommendation\": \"Add a check to ensure that s_escrowedShares is less than or equal to totalSupply before subtraction.\"\n    },\n    {\n      \"title\": \"Logic Error in AbstractYieldStrategy.convertYieldTokenToAsset\",\n      \"severity\": \"medium\",\n      \"confidence\": \"high\",\n      \"category\": \"logic-error\",\n      \"description\": \"The convertYieldTokenToAsset function in AbstractYieldStrategy.sol casts an int256 rate to uint256. If the rate is negative, an underflow will occur, leading to incorrect price calculations and potential fund loss.\",\n      \"file\": \"src/AbstractYieldStrategy.sol\",\n      \"lines\": \"115-119\",\n      \"recommendation\": \"Add a check to ensure that the rate is non-negative before casting to uint256.\"\n    },\n    {\n      \"title\": \"Logic Error in AbstractYieldStrategy._accrueFees\",\n      \"severity\": \"medium\",\n      \"confidence\": \"high\",\n      \"category\": \"logic-error\",\n      \"description\": \"The _accrueFees function in AbstractYieldStrategy.sol sets s_lastFeeAccrualTime to uint32(block.timestamp). If the block timestamp exceeds the maximum value of uint32, an overflow will occur, leading to incorrect fee calculations.\",\n      \"file\": \"src/AbstractYieldStrategy.sol\",\n      \"lines\": \"145-148\",\n      \"recommendation\": \"Use a larger data type for s_lastFeeAccrualTime or add a check to ensure that block.timestamp does not exceed the maximum value of uint32.\"\n    },\n    {\n      \"title\": \"Logic Error in AbstractYieldStrategy._calculateAdditionalFeesInYieldToken\",\n      \"severity\": \"medium\",\n      \"confidence\": \"high\",\n      \"category\": \"logic-error\",\n      \"description\": \"The _calculateAdditionalFeesInYieldToken function in AbstractYieldStrategy.sol uses a Taylor approximation to calculate e^x. If x is large, the approximation may be inaccurate, leading to incorrect fee calculations.\",\n      \"file\": \"src/AbstractYieldStrategy.sol\",\n      \"lines\": \"137-143\",\n      \"recommendation\": \"Use a more accurate method to calculate e^x or add a check to ensure that x is within a reasonable range.\"\n    },\n    {\n      \"title\": \"Logic Error in AbstractYieldStrategy._update\",\n      \"severity\": \"medium\",\n      \"confidence\": \"high\",\n      \"category\": \"logic-error\",\n      \"description\": \"The _update function in AbstractYieldStrategy.sol deletes t_AllowTransfer_To and t_AllowTransfer_Amount after a transfer. If the transfer fails, the transient variables will still be deleted, potentially preventing future transfers.\",\n      \"file\": \"src/AbstractYieldStrategy.sol\",\n      \"lines\": \"155-165\",\n      \"recommendation\": \"Ensure that the transient variables are only deleted after a successful transfer.\"\n    },\n    {\n      \"title\": \"Logic Error in AbstractYieldStrategy.mintShares\",\n      \"severity\": \"medium\",\n      \"confidence\": \"high\",\n      \"category\": \"logic-error\",\n      \"description\": \"The mintShares function in AbstractYieldStrategy.sol sets t_AllowTransfer_To and t_AllowTransfer_Amount before transferring shares. If the transfer fails, the transient variables will still be set, potentially allowing unauthorized transfers.\",\n      \"file\": \"src/AbstractYieldStrategy.sol\",\n      \"lines\": \"175-185\",\n      \"recommendation\": \"Ensure that the transient variables are only set after a successful transfer.\"\n    },\n    {\n      \"title\": \"Logic Error in AbstractYieldStrategy.burnShares\",\n      \"severity\": \"medium\",\n      \"confidence\": \"high\",\n      \"category\": \"logic-error\",\n      \"description\": \"The burnShares function in AbstractYieldStrategy.sol transfers assets to the lending router after burning shares. If the transfer fails, the shares will still be burned, potentially leading to fund loss.\",\n      \"file\": \"src/AbstractYieldStrategy.sol\",\n      \"lines\": \"187-195\",\n      \"recommendation\": \"Ensure that the transfer happens before burning shares or add a check to ensure that the transfer is successful.\"\n    }\n  ]\n}"
+}

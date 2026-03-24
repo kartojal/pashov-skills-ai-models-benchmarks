@@ -3,6 +3,7 @@ import reportsData from "virtual:reports";
 import type { ReportsMap } from "./types";
 import { ComparisonView } from "./ComparisonView";
 import { DetailView } from "./DetailView";
+import "./responsive.css";
 
 const reports = reportsData as ReportsMap;
 const targets = Object.keys(reports);
@@ -25,6 +26,7 @@ export function App() {
     <div style={{ minHeight: "100vh", background: "#0a0a0f" }}>
       {/* Header */}
       <header
+        className="app-header"
         style={{
           background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)",
           borderBottom: "1px solid #2a2a4a",
@@ -32,6 +34,7 @@ export function App() {
         }}
       >
         <div
+          className="app-header-inner"
           style={{
             display: "flex",
             alignItems: "center",
@@ -55,7 +58,7 @@ export function App() {
               Pashov Skills &times; AI Models Comparison
             </p>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div className="target-buttons" style={{ display: "flex", gap: 8 }}>
             {targets.map((t) => (
               <button
                 key={t}
@@ -83,6 +86,7 @@ export function App() {
 
       {/* Tab Bar */}
       <nav
+        className="tab-bar"
         style={{
           maxWidth: 1400,
           margin: "0 auto",
@@ -119,7 +123,7 @@ export function App() {
       </nav>
 
       {/* Content */}
-      <main style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 32px" }}>
+      <main className="main-content" style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 32px" }}>
         {sortedReports.length === 0 ? (
           <div
             style={{

@@ -38,9 +38,10 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
     : null;
 
   return (
-    <div style={{ display: "flex", gap: 20 }}>
+    <div className="detail-layout">
       {/* Model Sidebar */}
       <div
+        className="detail-sidebar"
         style={{
           width: 260,
           flexShrink: 0,
@@ -69,12 +70,14 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
           >
             Models ({reports.length})
           </div>
+          <div className="model-list">
           {reports.map((r) => {
             const isActive = r.metadata.model === selectedModel;
             return (
               <button
                 key={r.metadata.model}
                 onClick={() => onSelectModel(r.metadata.model)}
+                className={isActive ? "active" : ""}
                 style={{
                   display: "block",
                   width: "100%",
@@ -107,6 +110,7 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
               </button>
             );
           })}
+          </div>
         </div>
       </div>
 
@@ -168,7 +172,7 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
                     ).toLocaleString()}
                   </p>
                 </div>
-                <div style={{ display: "flex", gap: 8 }}>
+                <div className="severity-filters" style={{ display: "flex", gap: 8 }}>
                   {(
                     [
                       "all",
@@ -223,6 +227,7 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
 
               {/* Severity summary pills */}
               <div
+                className="severity-summary-pills"
                 style={{
                   display: "flex",
                   gap: 12,
@@ -310,6 +315,7 @@ function FindingCard({
     >
       {/* Finding header */}
       <button
+        className="finding-header"
         onClick={onToggle}
         style={{
           display: "flex",
@@ -351,6 +357,7 @@ function FindingCard({
           {finding.severity}
         </span>
         <span
+          className="finding-title"
           style={{
             flex: 1,
             fontSize: 14,
@@ -377,6 +384,7 @@ function FindingCard({
           {finding.confidence} conf
         </span>
         <span
+          className="finding-category"
           style={{
             fontSize: 11,
             color: "#666680",
