@@ -223,6 +223,16 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
     .sort((a, b) => b.matches - a.matches);
   const bestFidelity = fidelityScores[0];
 
+  // High-severity fidelity: match count against only human HIGH findings
+  const humanHighFindings = humanFindings.filter((f) => f.severity === "high");
+  const highFidelityScores = aiReports
+    .map((r) => ({
+      report: r,
+      matches: countMatches(r.findings, humanHighFindings),
+    }))
+    .sort((a, b) => b.matches - a.matches);
+  const bestHighFidelity = highFidelityScores[0];
+
   // Fidelity chart data (sorted by matches descending)
   const fidelityData = {
     labels: fidelityScores.map((s) => chartLabel(s.report)),
@@ -232,6 +242,21 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         data: fidelityScores.map((s) => s.matches),
         backgroundColor: fidelityScores.map((s) =>
           s === bestFidelity ? "#22c55e" : "#6366f1"
+        ),
+        borderRadius: 6,
+      },
+    ],
+  };
+
+  // High fidelity chart data (sorted by matches descending)
+  const highFidelityData = {
+    labels: highFidelityScores.map((s) => chartLabel(s.report)),
+    datasets: [
+      {
+        label: "Matched High Findings",
+        data: highFidelityScores.map((s) => s.matches),
+        backgroundColor: highFidelityScores.map((s) =>
+          s === bestHighFidelity ? "#f97316" : "#f9731680"
         ),
         borderRadius: 6,
       },
@@ -329,6 +354,16 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             <Bar data={fidelityData} options={chartOptions as any} plugins={[staggerLabelsPlugin]} />
           </div>
         </div>
+
+        {/* Fidelity vs Human Highs */}
+        <div>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#f97316", marginBottom: 12 }}>
+            Fidelity vs Human Highs ({humanHighFindings.length} high findings)
+          </h3>
+          <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
+            <Bar data={highFidelityData} options={chartOptions as any} plugins={[staggerLabelsPlugin]} />
+          </div>
+        </div>
       </div>
 
       {/* Leaderboard Table */}
@@ -402,12 +437,16 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
               <th style={{ padding: "10px 16px", textAlign: "center" }}>
                 Diff
               </th>
+              <th style={{ padding: "10px 16px", textAlign: "center" }}>
+                High Diff
+              </th>
               <th style={{ padding: "10px 16px" }}></th>
             </tr>
           </thead>
           <tbody>
             {aiReports.map((r, i) => {
               const diffLabel = `${countMatches(r.findings, humanFindings)}/${humanFindings.length}`;
+              const highDiffLabel = `${countMatches(r.findings, humanHighFindings)}/${humanHighFindings.length}`;
               return (
                 <tr
                   key={i}
@@ -528,6 +567,17 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                     }}
                   >
                     {diffLabel}
+                  </td>
+                  <td
+                    style={{
+                      padding: "12px 16px",
+                      textAlign: "center",
+                      color: "#f97316",
+                      fontWeight: 600,
+                      fontSize: 12,
+                    }}
+                  >
+                    {highDiffLabel}
                   </td>
                   <td style={{ padding: "12px 16px" }}>
                     <span
