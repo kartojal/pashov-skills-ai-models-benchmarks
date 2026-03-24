@@ -141,7 +141,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         },
         afterFit(axis: any) {
           // Add extra height to accommodate staggered labels
-          axis.paddingBottom = (axis.paddingBottom || 0) + (isMobile ? 28 : 14);
+          axis.paddingBottom = (axis.paddingBottom || 0) + (isMobile ? 44 : 14);
         },
         grid: { color: "#1a1a2e" },
       },
@@ -151,7 +151,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
       },
     },
     layout: {
-      padding: { bottom: isMobile ? 28 : 16 },
+      padding: { bottom: isMobile ? 44 : 16 },
     },
   };
 
@@ -179,7 +179,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
 
         const lines = Array.isArray(label) ? label : [label];
         // Position below the even-indexed labels
-        const yBase = xAxis.bottom + lineHeight * 2 + 8;
+        const yBase = xAxis.bottom + lineHeight + 6;
 
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
