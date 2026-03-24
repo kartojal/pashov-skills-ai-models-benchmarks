@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Report, Finding } from "./types";
+import { getModelLogo } from "./modelLogos";
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: "#ef4444",
@@ -94,7 +95,16 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
                   fontSize: 13,
                 }}
               >
-                <div style={{ fontWeight: 600 }}>{r.metadata.model}</div>
+                <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+                  {getModelLogo(r.metadata.model) && (
+                    <img
+                      src={getModelLogo(r.metadata.model)!}
+                      alt=""
+                      style={{ width: 18, height: 18, flexShrink: 0 }}
+                    />
+                  )}
+                  {r.metadata.model}
+                </div>
                 <div
                   style={{
                     fontSize: 11,
@@ -154,8 +164,18 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
                       fontSize: 20,
                       fontWeight: 700,
                       color: "#e0e0e8",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
                     }}
                   >
+                    {getModelLogo(activeReport.metadata.model) && (
+                      <img
+                        src={getModelLogo(activeReport.metadata.model)!}
+                        alt=""
+                        style={{ width: 28, height: 28 }}
+                      />
+                    )}
                     {activeReport.metadata.model}
                   </h2>
                   <p

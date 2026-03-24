@@ -11,6 +11,7 @@ import {
 import { Bar } from "react-chartjs-2";
 import type { Report, Finding } from "./types";
 import { useIsMobile } from "./useIsMobile";
+import { getModelLogo } from "./modelLogos";
 
 ChartJS.register(
   CategoryScale,
@@ -538,7 +539,16 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                       color: "#e0e0e8",
                     }}
                   >
-                    {r.metadata.model}
+                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {getModelLogo(r.metadata.model) && (
+                        <img
+                          src={getModelLogo(r.metadata.model)!}
+                          alt=""
+                          style={{ width: 20, height: 20, flexShrink: 0 }}
+                        />
+                      )}
+                      {r.metadata.model}
+                    </span>
                   </td>
                   <td style={{ padding: "12px 16px", color: "#8888aa" }}>
                     {r.metadata.harness}
