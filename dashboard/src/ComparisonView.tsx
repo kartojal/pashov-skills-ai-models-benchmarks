@@ -428,7 +428,9 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             </tr>
           </thead>
           <tbody>
-            {aiReports.map((r, i) => {
+            {[...aiReports]
+              .sort((a, b) => countMatches(b.findings, humanFindings) - countMatches(a.findings, humanFindings))
+              .map((r, i) => {
               const diffLabel = `${countMatches(r.findings, humanFindings)}/${humanFindings.length}`;
               const highDiffLabel = `${countMatches(r.findings, humanHighFindings)}/${humanHighFindings.length}`;
               return (
