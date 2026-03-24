@@ -484,7 +484,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                         <img
                           src={getModelLogo(r.metadata.model)!}
                           alt=""
-                          style={{ width: 20, height: 20, flexShrink: 0 }}
+                          style={{ width: 20, height: 20, flexShrink: 0, background: "white", borderRadius: "50%", padding: 2 }}
                         />
                       )}
                       {r.metadata.model}

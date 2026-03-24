@@ -109,7 +109,7 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
                     <img
                       src={getModelLogo(r.metadata.model)!}
                       alt=""
-                      style={{ width: 18, height: 18, flexShrink: 0 }}
+                      style={{ width: 18, height: 18, flexShrink: 0, background: "white", borderRadius: "50%", padding: 2 }}
                     />
                   )}
                   {r.metadata.model}
@@ -182,7 +182,7 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
                       <img
                         src={getModelLogo(activeReport.metadata.model)!}
                         alt=""
-                        style={{ width: 28, height: 28 }}
+                        style={{ width: 28, height: 28, background: "white", borderRadius: "50%", padding: 3 }}
                       />
                     )}
                     {activeReport.metadata.model}
