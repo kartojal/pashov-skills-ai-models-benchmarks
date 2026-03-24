@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "model": "minimax/minimax-m2.7",
+    "model": "grok/grok-4.20-beta",
     "harness": "opencode",
     "target": "notional-finance",
     "timestamp": "2026-03-24T17:59:57Z",
