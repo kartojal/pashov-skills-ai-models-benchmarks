@@ -1,0 +1,101 @@
+{
+  "metadata": {
+    "model": "google/gemini-3.1-pro-preview",
+    "harness": "opencode",
+    "target": "notional-finance",
+    "timestamp": "2026-03-24T14:05:22Z",
+    "duration_seconds": 199,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 5,
+    "critical": 1,
+    "high": 2,
+    "medium": 2,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Pendle PT oracle manipulation through stale rates after expiry",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "oracle manipulation",
+      "description": "In PendlePTOracle.sol, when requesting the price of a Pendle PT token, the oracle fetches the rate using PENDLE_ORACLE.getPtToSyRate or PENDLE_ORACLE.getPtToAssetRate. However, there is no validation that the PT has not expired. When Pendle PT tokens expire, their markets stop functioning and TWAP oracles stop updating. This creates a scenario where an attacker can manipulate the price right before expiry and that manipulated price will be used permanently after expiry. Since the yield strategy uses this price for collateral valuation in MorphoLendingRouter.healthFactor() and for liquidations, an attacker could manipulate the price just before expiry and then take out a loan with inflated collateral value, leading to direct theft of the underlying assets.",
+      "location": {
+        "file": "src/oracles/PendlePTOracle.sol",
+        "lines": "60-66"
+      },
+      "recommendation": "Add a check in the _getPTRate function to verify PT expiry status. If the token has expired, either revert or implement a failover mechanism to use a more reliable value source. Additionally, add staleness checks to ensure oracle data is recent and not manipulated.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "Unauthorized withdrawal of escrowed assets in RewardManagerMixin",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "access control",
+      "description": "In AbstractRewardManager.sol, the reward debt accounting for tokenized withdraw requests is vulnerable to manipulation. When a withdraw request is tokenized via tokenizeWithdrawRequest(), the reward debt for the receiving account is not properly updated for all reward tokens. This allows a malicious user to claim rewards multiple times for the same shares by transferring withdraw requests between accounts. The issue is in the _claimRewardToken function where rewardToClaim is calculated using the old rewardDebt value for the account, but when a withdraw request is tokenized, the debt doesn't properly follow the tokenized shares.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "220-255"
+      },
+      "recommendation": "Modify the tokenizeWithdrawRequest() function to properly update reward debts for all registered reward tokens when transferring shares between accounts. Consider adding a hook that updates reward accounting during tokenization operations.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "Precision loss in Curve exit pool balance calculation",
+      "severity": "high",
+      "confidence": "high",
+      "category": "mathematical error",
+      "description": "In CurveConvexLib._exitPool(), when calling remove_liquidity on a CurveV2 pool (lines 276-287), the code calculates the exit balances by measuring token balances before and after the pool operation. However, if the pool interactions involve fee-on-transfer tokens or rebasing tokens, this balance-diff pattern could result in incorrect accounting. Additionally, the implementation doesn't properly handle precision loss in multi-step calculations, which can be exploited via flash loans to drain value. An attacker could manipulate the pool state right before a user exit, causing improper asset valuation and theft of funds.",
+      "location": {
+        "file": "src/single-sided-lp/CurveConvex2Token.sol",
+        "lines": "272-287"
+      },
+      "recommendation": "For CurveV2 interactions, use the returned values directly when available rather than balance-diff calculations. Add explicit slippage checks to ensure the balance received meets minimum requirements. Implement proper normalization for rebasing token calculations.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "Incorrect reward accounting after migration in AbstractRewardManager",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "reward accounting",
+      "description": "In AbstractRewardManager.migrateRewardPool(), reward accounting is compromised during reward pool migration. When migrating to a new reward pool, the function sets the lastClaimTimestamp to the current block timestamp, but fails to properly update the accumulatedRewardPerVaultShare values for all tokens. This creates a scenario where rewards earned during the migration are not properly accounted for and can be lost. Users who have shares in the vault during migration will lose their proportional rewards earned in that period.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "44-65"
+      },
+      "recommendation": "Update the migrateRewardPool function to properly calculate and distribute the rewards earned during the migration period. Ensure all reward token accumulators are updated before changing the lastClaimTimestamp.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "Insufficient slippage protection in PendlePT's _redeemPT function",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "improper input validation",
+      "description": "The PendlePT contract's _redeemPT function (and by extension _executeInstantRedemption) lacks proper slippage protection when redeeming expired PT tokens. When PT tokens are expired, the _redeemPT function calls PendlePTLib.redeemExpiredPT without any minimum output amount check. This allows MEV bots or malicious actors to sandwich attack users' redemptions, causing them to receive significantly fewer tokens than expected. The issue is particularly problematic because the code explicitly checks for slippage when redeeming non-expired PT tokens via swapExactPtForToken, but fails to do so for expired tokens.",
+      "location": {
+        "file": "src/staking/PendlePT.sol",
+        "lines": "91-93"
+      },
+      "recommendation": "Add minimum output amount validation for expired PT redemptions by extending the PendleRedeemParams struct to include a minExpiredRedeemAmount parameter, and enforce this minimum when calling redeemExpiredPT.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    }
+  ],
+  "raw_output": "# Security Audit Report: Notional Finance Leveraged Vault Strategies\n\n## Scope\nAll Solidity files under `src/` — **1,959 nSLOC** across 27 contracts as specified in the target description.\n\n## Summary of Findings\n\nThrough detailed analysis of the codebase, I've identified 5 significant security issues:\n\n- **1 Critical**: Pendle PT oracle manipulation through stale rates after expiry\n- **2 High**: Unauthorized withdrawal of escrowed assets and precision loss in Curve exit pool calculation\n- **2 Medium**: Incorrect reward accounting after migration and insufficient slippage protection in PendlePT\n\nThe most severe issues center around oracle manipulation, improper reward accounting, and mathematical precision errors that could lead to direct loss of user funds.\n\n## Critical Findings\n\n### [C-01] Pendle PT oracle manipulation through stale rates after expiry\n\n**Impact**: Critical - Direct theft of funds through oracle manipulation\n\nIn `PendlePTOracle.sol`, the implementation fails to account for PT token expiry. When Pendle PT tokens expire, their markets cease functioning and TWAP oracles stop updating. This allows an attacker to manipulate the price before expiry, and that manipulated price will persist indefinitely.\n\nSince this price is used for collateral valuation in `MorphoLendingRouter.healthFactor()`, an attacker could artificially inflate the collateral value right before expiry, then take out a loan against this inflated collateral, leading to direct theft of the underlying assets.\n\n**Recommendation**: Add expiry validation in the `_getPTRate` function with appropriate fallback mechanisms for expired tokens.\n\n## High Findings\n\n### [H-01] Unauthorized withdrawal of escrowed assets in RewardManagerMixin\n\n**Impact**: High - Theft of reward tokens\n\nThe reward debt accounting for tokenized withdraw requests is vulnerable to manipulation. When a withdraw request is tokenized, the reward debt for the receiving account isn't properly updated for all reward tokens, allowing duplicate claims for the same shares.\n\n### [H-02] Precision loss in Curve exit pool balance calculation\n\n**Impact**: High - Fund loss due to improper asset accounting\n\nIn CurveConvexLib._exitPool(), when interacting with CurveV2 pools, the code calculates exit balances using a balance-diff pattern that's vulnerable to manipulation with fee-on-transfer tokens or in flash loan scenarios. This can result in theft of funds through asset value extraction.\n\n## Medium Findings\n\n### [M-01] Incorrect reward accounting after migration in AbstractRewardManager\n\n**Impact**: Medium - Loss of rewards during migration\n\nDuring reward pool migration, the lastClaimTimestamp is updated without properly accounting for all earned rewards, causing users who hold shares during migration to lose their proportional rewards.\n\n### [M-02] Insufficient slippage protection in PendlePT's _redeemPT function\n\n**Impact**: Medium - Value extraction via sandwich attacks\n\nThe PendlePT contract lacks slippage protection when redeeming expired PT tokens, leaving users vulnerable to sandwich attacks that could result in significantly reduced redemption amounts.\n\n## Conclusion\n\nThe audit identified several high-severity vulnerabilities primarily in oracle manipulation, reward accounting, and asset valuation. The most urgent issue is the potential for price manipulation of expired Pendle PT tokens, which could lead to direct theft of funds. Proper handling of token expiry, implementing strict slippage controls, and ensuring accurate reward accounting are essential for securing the protocol."
+}

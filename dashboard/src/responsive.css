@@ -24,7 +24,7 @@
 /* Charts grid: 1 column on mobile */
 .charts-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 20px;
 }
 @media (max-width: 768px) {

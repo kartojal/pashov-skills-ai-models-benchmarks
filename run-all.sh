@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Master orchestrator — runs all AI security audit benchmarks against a target
+# Master orchestrator — runs all AI security audit benchmarks against a target.
+# Each runner invokes its harness (claude-code, opencode, codex) directly.
 #
 # Usage:
-#   ./run-all.sh <target-name>                  # Run all sequentially
-#   ./run-all.sh <target-name> --parallel        # Run all in parallel
-#   ./run-all.sh <target-name> --only claude-code-opus-4.6  # Run specific runner
+#   ./run-all.sh <target-name>                                # Run all sequentially
+#   ./run-all.sh <target-name> --parallel                     # Run all in parallel
+#   ./run-all.sh <target-name> --only claude-code-opus-4.6    # Run specific runner
+#   ./run-all.sh <target-name> --run-id run-1                 # Tag this run
 
 set -euo pipefail
 
@@ -19,16 +21,18 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-TARGET="${1:?Usage: $0 <target-name> [--parallel] [--only <runner>]}"
+TARGET="${1:?Usage: $0 <target-name> [--parallel] [--only <runner>] [--run-id <id>]}"
 shift
 
 PARALLEL=false
 ONLY=""
+RUN_ID=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --parallel) PARALLEL=true; shift ;;
     --only)     ONLY="$2"; shift 2 ;;
+    --run-id)   RUN_ID="$2"; shift 2 ;;
     *)          echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -37,11 +41,13 @@ done
 RUNNERS=(
   "claude-code-opus-4.6"
   "claude-code-sonnet-4.6"
+  "opencode-claude-opus-4.6"
   "opencode-gemini-3.1-pro"
   "codex-gpt-5.4"
   "opencode-mimo-v2-pro"
   "opencode-minimax-m2.7"
   "opencode-qwen3.5-9b"
+  "opencode-qwen3.5-27b"
   "opencode-grok-4.20-beta"
 )
 
@@ -58,18 +64,12 @@ echo ""
 echo -e "${CYAN}Target:${NC}   ${TARGET}"
 echo -e "${CYAN}Runners:${NC}  ${#RUNNERS[@]}"
 echo -e "${CYAN}Mode:${NC}     $(if $PARALLEL; then echo "parallel"; else echo "sequential"; fi)"
+[[ -n "$RUN_ID" ]] && echo -e "${CYAN}Run ID:${NC}   ${RUN_ID}"
 echo ""
 
 # Verify target exists
 if [[ ! -d "${BENCHMARK_ROOT}/targets/${TARGET}/repo" ]]; then
   echo -e "${RED}[ERROR]${NC} Target not found: targets/${TARGET}/repo" >&2
-  exit 1
-fi
-
-# Check hermes is installed
-if ! command -v hermes &>/dev/null; then
-  echo -e "${RED}[ERROR]${NC} Hermes is not installed." >&2
-  echo "  Install: curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash" >&2
   exit 1
 fi
 
@@ -87,12 +87,12 @@ run_single() {
   local script="${RUNNERS_DIR}/${runner}.sh"
 
   if [[ ! -x "$script" ]]; then
-    echo -e "${RED}[${idx}/${TOTAL}] Runner not found: ${runner}${NC}" >&2
+    echo -e "${RED}[${idx}/${TOTAL}] Runner not found or not executable: ${runner}${NC}" >&2
     return 1
   fi
 
   echo -e "${CYAN}[${idx}/${TOTAL}]${NC} Starting: ${BOLD}${runner}${NC}"
-  if "$script" "$TARGET"; then
+  if "$script" "$TARGET" "$RUN_ID"; then
     echo -e "${GREEN}[${idx}/${TOTAL}] PASS:${NC} ${runner}"
     return 0
   else
@@ -105,6 +105,11 @@ if $PARALLEL; then
   echo -e "${YELLOW}Launching all runners in parallel...${NC}"
   echo ""
 
+  # Determine report dir for logs
+  report_base="${BENCHMARK_ROOT}/reports/${TARGET}"
+  [[ -n "$RUN_ID" ]] && report_base="${report_base}/${RUN_ID}"
+  mkdir -p "$report_base"
+
   for i in "${!RUNNERS[@]}"; do
     runner="${RUNNERS[$i]}"
     idx=$((i + 1))
@@ -116,8 +121,8 @@ if $PARALLEL; then
       continue
     fi
 
-    log_file="${BENCHMARK_ROOT}/reports/${TARGET}/${runner}.log"
-    "$script" "$TARGET" > "$log_file" 2>&1 &
+    log_file="${report_base}/${runner}.parallel.log"
+    "$script" "$TARGET" "$RUN_ID" > "$log_file" 2>&1 &
     PIDS+=($!)
     RUNNER_NAMES+=("$runner")
     echo -e "${CYAN}[${idx}/${TOTAL}]${NC} Launched: ${runner} (PID $!)"
@@ -165,7 +170,9 @@ echo -e "  ${GREEN}Passed:${NC}   ${PASSED}"
 echo -e "  ${RED}Failed:${NC}   ${FAILED}"
 echo -e "  Duration: ${total_duration}s"
 echo ""
-echo -e "  Reports: ${BENCHMARK_ROOT}/reports/${TARGET}/"
+report_dir="${BENCHMARK_ROOT}/reports/${TARGET}"
+[[ -n "$RUN_ID" ]] && report_dir="${report_dir}/${RUN_ID}"
+echo -e "  Reports: ${report_dir}/"
 echo ""
 echo -e "  View dashboard: ${CYAN}cd dashboard && bun run dev${NC}"
 echo ""

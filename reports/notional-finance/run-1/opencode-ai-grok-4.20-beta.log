@@ -1,0 +1,17 @@
+2026/03/24 14:16:25 WARN FZF not found in $PATH. Some features might be limited or slower.
+I've completed the security audit benchmark for the Notional Finance Leveraged Vault Strategies. The audit identified 7 key vulnerabilities:
+
+1. Two critical severity issues:
+   - Reentrancy vulnerabilities in AbstractYieldStrategy's virtual functions
+   - Dangerous delegatecall pattern in AbstractSingleSidedLP
+
+2. Three high severity issues:
+   - Oracle manipulation risk in convertYieldTokenToAsset
+   - Missing slippage protection in trade execution
+   - Improper validation in TimelockUpgradeableProxy.executeUpgrade
+
+3. Two medium severity issues:
+   - Precision loss in withdraw request share calculation
+   - Silent failures in reward token transfers
+
+The JSON report has been successfully generated and saved to the specified location. These findings highlight significant security concerns that could lead to potential fund loss, unauthorized access, or manipulation of the protocol's core functions.

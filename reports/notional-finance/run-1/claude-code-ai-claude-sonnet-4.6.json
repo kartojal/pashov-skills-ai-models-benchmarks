@@ -1,0 +1,131 @@
+{
+  "metadata": {
+    "model": "claude-sonnet-4.6",
+    "harness": "claude-code",
+    "target": "notional-finance",
+    "timestamp": "2026-03-24T12:27:28Z",
+    "duration_seconds": 1695,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 6,
+    "critical": 0,
+    "high": 3,
+    "medium": 3,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Dinero `_initiateWithdrawImpl`: `uint16` batch nonce overflows, permanently bricking all new Dinero withdrawals",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Denial of Service / Integer Overflow",
+      "description": "`s_batchNonce` in `DineroWithdrawRequestManager` is declared as `uint16` (maximum value 65,535). In Solidity 0.8.x, arithmetic is checked by default, so the `++s_batchNonce` increment on the 65,536th call to `_initiateWithdrawImpl` triggers a checked overflow revert. This permanently bricks all subsequent Dinero vault withdrawal initiations — users who deposited after the nonce exhaustion can never retrieve their funds through the Dinero withdrawal path. The `requestId` encoding packs the nonce into bits `[255:240]` via `nonce << 240`; widening the type also requires adjusting the bit-packing scheme. In high-volume deployments, 65,535 withdrawals is achievable in months.",
+      "location": {
+        "file": "src/withdraws/Dinero.sol",
+        "lines": "~73 (s_batchNonce declaration), ~85 (++s_batchNonce)"
+      },
+      "recommendation": "Widen `s_batchNonce` from `uint16` to `uint64` (or at minimum `uint32`) and adjust the `requestId` bit-packing layout accordingly:\n```diff\n- uint16 private s_batchNonce;\n+ uint64 private s_batchNonce;\n```\nAlso audit the `requestId` bit-shift construction to ensure the wider nonce does not collide with `initialBatchId` or `finalBatchId` fields.",
+      "agents_reporting": [
+        "vector-scan-agent",
+        "math-precision-agent",
+        "access-control-agent",
+        "execution-trace-agent",
+        "first-principles-agent"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "`DineroWithdrawRequestManager.canFinalizeWithdrawRequest`: inequality inverted — blocks all withdrawals when Pirex is healthy, allows finalization when underfunded",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Logic Error / Inverted Condition",
+      "description": "The inline comment on `canFinalizeWithdrawRequest` explicitly states: \"Can only finalize if the total assets are greater than the outstanding redemptions.\" The implementation returns `PirexETH.outstandingRedemptions() > totalAssets` — the exact opposite direction. This has two critical consequences:\n\n1. **Withdrawal DoS when Pirex is healthy**: When `totalAssets >= outstandingRedemptions` (the protocol has sufficient ETH to cover all outstanding redemption requests, i.e., the healthy/settled state), the function returns `false`, permanently blocking all Dinero vault user withdrawals.\n\n2. **Premature finalization when underfunded**: When the Pirex system is under-collateralized (`outstandingRedemptions > totalAssets`), the function returns `true`, allowing `_finalizeWithdrawImpl` to proceed. If `PirexETH.redeemWithUpxEth` succeeds but returns 0 ETH (batch not yet funded), `tokensClaimed = 0` → `WETH.deposit{value: 0}()` executes silently → `s.finalized = true` and `s.totalWithdraw = 0` are written. Subsequent calls hit `require(s.finalized == false)` and revert, permanently locking the user's funds with zero payout.",
+      "location": {
+        "file": "src/withdraws/Dinero.sol",
+        "lines": "~149-150 (canFinalizeWithdrawRequest return statement)"
+      },
+      "recommendation": "Invert the comparison to match the stated invariant:\n```diff\n- return PirexETH.outstandingRedemptions() > totalAssets;\n+ return totalAssets >= PirexETH.outstandingRedemptions();\n```\nAlso consider replacing this global metric with a per-batch readiness check (e.g., checking whether each specific batch's validators have been dissolved and ETH deposited) to avoid false positives from unrelated global queue state.",
+      "agents_reporting": [
+        "math-precision-agent",
+        "access-control-agent",
+        "execution-trace-agent",
+        "first-principles-agent"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "`AbstractRewardManager.updateAccountRewards`: vault-claimed rewards permanently overwritten by stale emission accumulation when both reward sources are active",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "Reward Accounting Error / Stale Memory State",
+      "description": "In `updateAccountRewards`, the `state[]` memory array is loaded from storage once at the top. `_claimVaultRewards(effectiveSupply, state)` is then called — it internally calls `_accumulateSecondaryRewardViaClaim(index, state[index], claimedTokens, supply)`. This function receives `state[index]` as a **value copy** (`VaultRewardState memory state`), increments the local copy's `accumulatedRewardPerVaultShare` by the claim delta, and writes the updated struct back to **storage**. However, the outer `state[]` array in `updateAccountRewards` is NOT updated — `state[index].accumulatedRewardPerVaultShare` still holds the pre-claim value X.\n\nFor any reward token that also has `emissionRatePerYear > 0`, the loop then calls `_accumulateSecondaryRewardViaEmissionRate(i, state[i], supply)` with the **stale** `state[i]` (base = X, missing claimDelta). This function computes `X + emissionDelta` and writes it to storage — **overwriting** the `X + claimDelta` that was written moments earlier. The claim delta is permanently lost from the accumulator.\n\nConcrete example:\n- Storage: `acc = 100`, vault claims 50 tokens → storage becomes `acc = 150`\n- `state[i].acc = 100` (stale in memory)\n- Emission delta = 5 → `_accumulateSecondaryRewardViaEmissionRate` writes `acc = 105` to storage\n- Storage now holds 105, not 155. The 50-token claim increment is gone forever.\n- `_claimRewardToken` distributes based on stale acc=100, so users receive neither the claim nor emission rewards for this call.\n\nThis affects every vault where a reward token has both a live Convex/gauge reward pool AND a protocol emission rate — a common and intended configuration. The 50 tokens exist in the vault's token balance but have no accumulator entry, making them permanently unclaimable by any user.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "~158-185 (updateAccountRewards loop, _claimVaultRewards call, _accumulateSecondaryRewardViaEmissionRate call)"
+      },
+      "recommendation": "After `_claimVaultRewards` returns, reload each `state[i]` from storage so that `_accumulateSecondaryRewardViaEmissionRate` and `_claimRewardToken` work from post-claim values:\n```diff\n  _claimVaultRewards(effectiveSupplyBefore, state);\n\n  for (uint256 i; i < state.length; i++) {\n+     state[i] = _getVaultRewardStateSlot()[i]; // reload post-claim accumulator\n      if (0 < state[i].emissionRatePerYear) {\n          _accumulateSecondaryRewardViaEmissionRate(i, state[i], effectiveSupplyBefore);\n      }\n```\nAlternatively, refactor `_accumulateSecondaryRewardViaClaim` to update both storage AND the caller's memory array (e.g., by passing `state[i]` by storage reference or returning the updated struct).",
+      "agents_reporting": [
+        "vector-scan-agent",
+        "economic-security-agent",
+        "execution-trace-agent",
+        "first-principles-agent"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "Missing Chainlink staleness validation in `Curve2TokenOracle` and `PendlePTOracle` — stale prices flow into Morpho collateral oracle",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Oracle / Missing Staleness Check",
+      "description": "Both `Curve2TokenOracle._calculateBaseToQuote` and `PendlePTOracle._calculateBaseToQuote` call `baseToUSDOracle.latestRoundData()` and validate only that `baseToUSD > 0`. The `updatedAt` timestamp, `answeredInRound`, and `roundId` values returned by the Chainlink feed are never checked against a maximum staleness threshold.\n\nDuring Chainlink heartbeat failures, L2 sequencer downtime, or feed pauses, the `latestRoundData()` call succeeds but returns data that may be hours or days old. This stale price flows through `_calculateBaseToQuote` → `AbstractLPOracle.price()` / `PendlePTOracle.price()` → Morpho's collateral oracle `IOracle.price()`. Morpho unconditionally trusts this oracle (per the integration caveat: \"No oracle staleness check\").\n\nA stale inflated price can:\n1. Allow a borrower to take on more debt than their collateral warrants (over-borrowing)\n2. Prevent liquidation of undercollateralized positions (health check passes with inflated collateral price), accumulating bad debt\n\nBoth outcomes cause material loss to vault suppliers.",
+      "location": {
+        "file": "src/oracles/Curve2TokenOracle.sol",
+        "lines": "~45-55 (_calculateBaseToQuote, latestRoundData call)"
+      },
+      "recommendation": "Add staleness validation after each `latestRoundData()` call:\n```diff\n  (,int256 baseToUSD,,uint256 updatedAt,) = baseToUSDOracle.latestRoundData();\n  require(baseToUSD > 0, \"Invalid price\");\n+ require(block.timestamp - updatedAt <= MAX_ORACLE_STALENESS, \"Stale oracle\");\n```\nChoose `MAX_ORACLE_STALENESS` based on each feed's documented heartbeat interval (e.g., 3600s for 1-hour heartbeat feeds, with a small buffer). Apply the same pattern to `PendlePTOracle`.",
+      "agents_reporting": [
+        "math-precision-agent",
+        "access-control-agent"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "`AbstractRewardManager.updateAccountRewards`: 1-call accumulation lag causes exiting users to permanently forfeit the final reward interval",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Reward Accounting Error / Stale Accumulator",
+      "description": "`_claimRewardToken` is called with `state[i].accumulatedRewardPerVaultShare` from the memory snapshot loaded at the start of `updateAccountRewards`. This value does NOT include the current call's vault-claim delta (written to storage by `_claimVaultRewards`) nor the current call's emission delta (written to storage by `_accumulateSecondaryRewardViaEmissionRate`).\n\nFor users who continue interacting with the vault, the missed interval is recovered on the next call (next snapshot loads the updated storage accumulator). However, for users who burn ALL their shares in the same transaction where rewards accumulate (`accountSharesAfter = 0`), `_claimRewardToken` distributes rewards based on the stale pre-accumulation value and sets a debt of `0 * acc = 0`. The user never triggers another `updateAccountRewards` call because they hold no more shares. The current interval's uncredited rewards are permanently forfeited — they remain in the vault accumulator, diluted across remaining depositors.\n\nImpact magnitude scales with: emission rate, vault size, and the time since the last accumulation event.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "~158-185 (updateAccountRewards, _claimRewardToken call)"
+      },
+      "recommendation": "After `_claimVaultRewards` and each `_accumulateSecondaryRewardViaEmissionRate` call, reload `state[i]` from storage before passing `state[i].accumulatedRewardPerVaultShare` to `_claimRewardToken`. (This fix overlaps with F-003; applying the F-003 fix also resolves this issue.)",
+      "agents_reporting": [
+        "economic-security-agent",
+        "execution-trace-agent",
+        "first-principles-agent"
+      ]
+    },
+    {
+      "id": "F-006",
+      "title": "`AbstractRewardManager.updateAccountRewards`: fully liquidated escrowed account's accrued-but-unclaimed rewards are deleted without distribution",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Reward Accounting Error / Fund Loss on Liquidation",
+      "description": "In `updateAccountRewards`, when `sharesInEscrow == true && accountSharesAfter == 0` (a full liquidation of an account whose vault shares are held in escrow for a pending withdraw request), the code executes:\n```solidity\ndelete _getAccountRewardDebtSlot()[state[i].rewardToken][account];\ncontinue;\n```\nThis deletes the reward debt entry without first computing and transferring the accrued-but-unclaimed rewards owed to the liquidated account. The difference between the current `accumulatedRewardPerVaultShare` and the stored debt represents rewards the account earned but never claimed. By deleting the debt without paying it out, those rewards are effectively redistributed to remaining vault depositors via index dilution — the liquidated user receives nothing for that period.\n\nThis is triggered by any full liquidation path: `preLiquidation` → `_postLiquidation` → `updateAccountRewards(sharesInEscrow=true, accountSharesAfter=0)`.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "~165-175 (sharesInEscrow && accountSharesAfter==0 branch in updateAccountRewards loop)"
+      },
+      "recommendation": "Before deleting the reward debt slot, compute and transfer any accrued rewards:\n```diff\n  if (sharesInEscrow && accountSharesAfter == 0) {\n+     // Pay out any accrued rewards before clearing the debt\n+     _claimRewardToken(state[i].rewardToken, account, accountSharesBefore, 0, state[i].accumulatedRewardPerVaultShare);\n      delete _getAccountRewardDebtSlot()[state[i].rewardToken][account];\n      continue;\n  }\n```\nVerify that `_claimRewardToken` correctly handles the `accountSharesAfter=0` case (sends accrued amount, sets new debt to 0) before applying this fix.",
+      "agents_reporting": [
+        "execution-trace-agent",
+        "first-principles-agent"
+      ]
+    }
+  ],
+  "raw_output": "# 🔐 Security Review — notional-finance\n\n---\n\n## Scope\n\n|                                  |                                                        |\n| -------------------------------- | ------------------------------------------------------ |\n| **Mode**                         | ALL                                                    |\n| **Files reviewed**               | `src/AbstractYieldStrategy.sol` · `src/oracles/AbstractCustomOracle.sol` · `src/oracles/AbstractLPOracle.sol` · `src/oracles/Curve2TokenOracle.sol`<br>`src/oracles/PendlePTOracle.sol` · `src/proxy/AddressRegistry.sol` · `src/proxy/Initializable.sol` · `src/proxy/TimelockUpgradeableProxy.sol`<br>`src/rewards/AbstractRewardManager.sol` · `src/rewards/ConvexRewardManager.sol` · `src/rewards/RewardManagerMixin.sol` · `src/routers/AbstractLendingRouter.sol`<br>`src/routers/MorphoLendingRouter.sol` · `src/single-sided-lp/AbstractSingleSidedLP.sol` · `src/single-sided-lp/CurveConvex2Token.sol` · `src/staking/AbstractStakingStrategy.sol`<br>`src/staking/PendlePTLib.sol` · `src/staking/PendlePT.sol` · `src/staking/PendlePT_sUSDe.sol` · `src/staking/StakingStrategy.sol`<br>`src/utils/Constants.sol` · `src/utils/TokenUtils.sol` · `src/utils/TypeConvert.sol` · `src/withdraws/AbstractWithdrawRequestManager.sol`<br>`src/withdraws/ClonedCooldownHolder.sol` · `src/withdraws/Dinero.sol` · `src/withdraws/Ethena.sol` · `src/withdraws/EtherFi.sol`<br>`src/withdraws/GenericERC20.sol` · `src/withdraws/GenericERC4626.sol` · `src/withdraws/Origin.sol` |\n| **Confidence threshold (1-100)** | 75                                                     |\n\n---\n\n## Findings\n\n[95] **1. Dinero `_initiateWithdrawImpl`: `uint16` batch nonce overflows, permanently bricking all new withdrawals**\n\n`DineroWithdrawRequestManager._initiateWithdrawImpl` · Confidence: 95 · [agents: 5]\n\n**Description**\n`s_batchNonce` is declared `uint16` (max 65,535); in Solidity 0.8.x, the `++s_batchNonce` increment on the 65,536th call reverts with a checked overflow, permanently preventing any further Dinero vault withdrawal initiations.\n\n**Fix**\n\n```diff\n- uint16 private s_batchNonce;\n+ uint64 private s_batchNonce;\n```\n(Adjust the 240-bit nonce packing in `requestId` accordingly.)\n\n---\n\n[88] **2. `DineroWithdrawRequestManager.canFinalizeWithdrawRequest`: inequality inverted — blocks all withdrawals when Pirex is healthy**\n\n`DineroWithdrawRequestManager.canFinalizeWithdrawRequest` · Confidence: 88 · [agents: 4]\n\n**Description**\nThe inline comment states \"Can only finalize if the total assets are **greater than** the outstanding redemptions\" but the code returns `PirexETH.outstandingRedemptions() > totalAssets` — the opposite direction — blocking finalization when Pirex is settled and allowing it when underfunded. If `redeemWithUpxEth` returns 0 ETH without reverting, `s.finalized = true` with `s.totalWithdraw = 0` permanently locks the user's funds.\n\n**Fix**\n\n```diff\n- return PirexETH.outstandingRedemptions() > totalAssets;\n+ return totalAssets >= PirexETH.outstandingRedemptions();\n```\n\n---\n\n[82] **3. `AbstractRewardManager.updateAccountRewards`: vault-claimed rewards permanently overwritten by stale emission accumulation**\n\n`AbstractRewardManager.updateAccountRewards` · Confidence: 82 · [agents: 4]\n\n**Description**\n`_claimVaultRewards` writes the fresh claim delta to storage but cannot update the outer `state[]` memory array (struct passed by value); the immediately following `_accumulateSecondaryRewardViaEmissionRate` reads the stale `state[i]` (base=X, missing claimDelta) and overwrites storage with `X + emissionDelta`, permanently erasing `X + claimDelta` for every reward token that has both a live reward pool and a non-zero emission rate.\n\n**Fix**\n\n```diff\n  _claimVaultRewards(effectiveSupplyBefore, state);\n\n  for (uint256 i; i < state.length; i++) {\n+     state[i] = _getVaultRewardStateSlot()[i]; // reload post-claim accumulator\n      if (0 < state[i].emissionRatePerYear) {\n          _accumulateSecondaryRewardViaEmissionRate(i, state[i], effectiveSupplyBefore);\n      }\n```\n\n---\n\n[75] **4. Custom oracles: no Chainlink staleness validation**\n\n`Curve2TokenOracle._calculateBaseToQuote`, `PendlePTOracle._calculateBaseToQuote` · Confidence: 75 · [agents: 2]\n\n**Description**\n`latestRoundData()` is called and only `answer > 0` is checked; `updatedAt`, `answeredInRound`, and `roundId` are never validated against a maximum staleness threshold, allowing a heartbeat-failed feed to serve stale prices to Morpho's collateral oracle, blocking liquidations or enabling over-borrowing.\n\n---\n\n[75] **5. `AbstractRewardManager.updateAccountRewards`: 1-call lag causes exiting users to permanently forfeit the final reward interval**\n\n`AbstractRewardManager.updateAccountRewards` · Confidence: 75 · [agents: 3]\n\n**Description**\n`_claimRewardToken` receives the pre-accumulation `state[i].accumulatedRewardPerVaultShare` snapshot; a user who burns all shares in the same call where rewards accumulate exits with `accountSharesAfter = 0` and can never trigger a follow-up to recover the current interval, permanently forfeiting those rewards.\n\n---\n\n[75] **6. `AbstractRewardManager.updateAccountRewards`: fully liquidated escrowed account forfeits accrued rewards**\n\n`AbstractRewardManager.updateAccountRewards` · Confidence: 75 · [agents: 2]\n\n**Description**\nWhen `sharesInEscrow == true && accountSharesAfter == 0`, the code `delete _getAccountRewardDebtSlot()[token][account]` wipes the reward debt without first computing and transferring the accrued-but-unclaimed reward balance to the liquidated user, permanently burning their pending rewards.\n\n---\n\nFindings List\n\n| # | Confidence | Title |\n|---|---|---|\n| 1 | [95] | Dinero `uint16` nonce overflow — permanent withdrawal DoS |\n| 2 | [88] | Dinero `canFinalizeWithdrawRequest` inverted condition |\n| 3 | [82] | Reward vault-claim delta overwritten by stale emission accumulation |\n| 4 | [75] | Missing Chainlink staleness check in custom oracles |\n| 5 | [75] | Exit users forfeit final accumulation interval rewards |\n| 6 | [75] | Fully liquidated escrowed account forfeits accrued rewards |\n\n---\n\n## Leads\n\n_Vulnerability trails with concrete code smells where the full exploit path could not be completed in one analysis pass._\n\n- **Cooldown griefing via `enterPosition`** — `AbstractLendingRouter.enterPosition` — Code smells: `_enterPosition` resets `lastEntryTime` on every call; approved operator can call with zero deposit/borrow amounts to reset the 5-minute cooldown — an approved (malicious or compromised) operator can indefinitely block a user from calling `exitPosition` by repeatedly resetting the cooldown timer.\n\n- **Stale oracle price in `getWithdrawRequestValue`** — `AbstractWithdrawRequestManager.getWithdrawRequestValue` — Code smells: `TRADING_MODULE.getOraclePrice()` called without staleness check; feeds into Morpho collateral valuation for accounts with pending withdrawals via `price(borrower)` — stale prices could inflate collateral value, blocking liquidations of undercollateralized positions.\n\n- **PendlePT expired-PT oracle mismatch** — `PendlePT._initiateWithdraw` — Code smells: `_redeemPT()` returns TOKEN_OUT_SY amount stored as `yieldTokenAmount`; `getWithdrawRequestValue` uses PT oracle (YIELD_TOKEN) to price it — if TOKEN_OUT_SY ≠ PT price (discount before full settlement at expiry), health factor collateral valuation is inaccurate.\n\n- **`claimRewards` accepts arbitrary unvalidated vault address** — `AbstractLendingRouter.claimRewards` — Code smells: `vault` parameter not checked against `ADDRESS_REGISTRY.whitelistedVaults`; the lending router delegates call into any address passed — allows calling attacker-controlled contracts from the lending router context.\n\n- **`sharesAmount` division edge case in `getWithdrawRequestValue`** — `AbstractWithdrawRequestManager.getWithdrawRequestValue` — Code smells: `return totalValue * shares / w.sharesAmount` with no explicit non-zero check on `w.sharesAmount`; if rounding in repeated partial tokenizations via `toUint120` truncation drives `sharesAmount` to 0 while `requestId` remains non-zero, the function panics, bricking health factor reads and preventing liquidation.\n\n---\n\n> ⚠️ This review was performed by an AI assistant. AI analysis can never verify the complete absence of vulnerabilities and no guarantee of security is given. Team security reviews, bug bounty programs, and on-chain monitoring are strongly recommended. For a consultation regarding your projects' security, visit [https://www.pashov.com](https://www.pashov.com)"
+}

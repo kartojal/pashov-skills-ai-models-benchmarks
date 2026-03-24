@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Benchmark: OpenCode + Qwen 3.5 27B via OpenRouter
-# Orchestrated by Hermes → invokes opencode CLI
+# Benchmark: OpenCode + Qwen 3.5 27B
+# Invokes `opencode` CLI directly
 
 set -euo pipefail
 source "$(dirname "$0")/_common.sh"
 
 TARGET="${1:?Usage: $0 <target-name>}"
+RUN_ID="${2:-}"
 RUNNER_ID="opencode-ai-qwen3.5-27b"
 HARNESS="opencode"
 MODEL="qwen/qwen3.5-27b"
-HARNESS_CMD="OpenCode (opencode --model qwen/qwen3.5-27b)"
+MODEL_ID="qwen/qwen3.5-27b"
 
-run_benchmark "$TARGET" "$RUNNER_ID" "$HARNESS" "$MODEL" "$HARNESS_CMD"
+run_benchmark "$TARGET" "$RUNNER_ID" "$HARNESS" "$MODEL" "$MODEL_ID" "$RUN_ID"

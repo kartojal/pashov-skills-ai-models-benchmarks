@@ -1,0 +1,8 @@
+[0;36m[INFO][0m  Starting benchmark: codex-ai-gpt-5.4
+[0;36m[INFO][0m    Target:  notional-finance (/home/vscode/projects/security-audit-skills-benchmark/targets/notional-finance/repo)
+[0;36m[INFO][0m    Harness: codex
+[0;36m[INFO][0m    Model:   openai/gpt-5.4
+[0;36m[INFO][0m    Report:  /home/vscode/projects/security-audit-skills-benchmark/reports/notional-finance/run-1/codex-ai-gpt-5.4.json
+[0;36m[INFO][0m    Run:     run-1
+[0;36m[INFO][0m  Invoking codex...
+Error: stdin is not a terminal

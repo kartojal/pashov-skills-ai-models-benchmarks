@@ -1,0 +1,2 @@
+2026/03/24 14:29:02 WARN FZF not found in $PATH. Some features might be limited or slower.
+I've completed the security audit of the Notional Finance codebase and created a JSON report with 5 findings (1 critical, 2 high, 2 medium) as requested. The report includes detailed descriptions of each vulnerability, their locations, and recommended fixes.

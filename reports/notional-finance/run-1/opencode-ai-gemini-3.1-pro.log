@@ -1,0 +1,8 @@
+2026/03/24 14:03:07 WARN FZF not found in $PATH. Some features might be limited or slower.
+I've completed the security audit on the Notional Finance codebase and saved the findings to the requested JSON file. The audit identified 5 significant vulnerabilities:
+
+1. A critical oracle manipulation issue in PendlePTOracle
+2. Two high-severity issues related to reward accounting and precision loss
+3. Two medium-severity issues affecting reward migration and slippage protection
+
+The report has been saved to the specified location with all required information following the requested format.

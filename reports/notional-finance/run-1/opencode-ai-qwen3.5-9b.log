@@ -1,0 +1,8 @@
+2026/03/24 14:30:24 WARN FZF not found in $PATH. Some features might be limited or slower.
+Security audit report has been generated and saved to the specified path. The audit identified 5 security findings:
+
+1. One Critical finding: Oracle manipulation vulnerability in PendlePTOracle
+2. Two High findings: Missing slippage protection issues in Curve and Pendle integrations
+3. Two Medium findings: Reentrancy vulnerability and unchecked token transfers
+
+These vulnerabilities could potentially lead to fund loss through various attack vectors including oracle manipulation, front-running, and contract interactions.

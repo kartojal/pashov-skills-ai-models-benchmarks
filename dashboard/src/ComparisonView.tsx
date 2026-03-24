@@ -1,4 +1,3 @@
-import type React from "react";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -31,29 +30,34 @@ const SEVERITY_COLORS: Record<string, string> = {
   informational: "#8b5cf6",
 };
 
-const CONFIDENCE_COLORS: Record<string, string> = {
-  high: "#22c55e",
-  medium: "#eab308",
-  low: "#ef4444",
-};
-
-function shortLabel(r: Report) {
-  return `${r.metadata.harness} / ${r.metadata.model}`;
+function shortModel(model: string): string {
+  // Strip provider prefix (e.g. "anthropic/claude-opus-4.6" -> "claude-opus-4.6")
+  const name = model.includes("/") ? model.split("/").pop()! : model;
+  return name;
 }
 
-function titleWords(title: string): Set<string> {
+function shortLabel(r: Report): string {
+  return `${r.metadata.harness} / ${shortModel(r.metadata.model)}`;
+}
+
+/** Multi-line label for chart x-axis: [harness, model] */
+function chartLabel(r: Report): string[] {
+  return [r.metadata.harness, shortModel(r.metadata.model)];
+}
+
+function extractWords(text: string): Set<string> {
   return new Set(
-    title
+    text
       .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, "")
+      .replace(/[^a-z0-9\s]/g, " ")
       .split(/\s+/)
       .filter((w) => w.length > 2)
   );
 }
 
-function titleOverlap(a: string, b: string): number {
-  const wordsA = titleWords(a);
-  const wordsB = titleWords(b);
+function wordOverlap(a: string, b: string): number {
+  const wordsA = extractWords(a);
+  const wordsB = extractWords(b);
   if (wordsA.size === 0 || wordsB.size === 0) return 0;
   let matches = 0;
   for (const w of wordsA) {
@@ -63,21 +67,79 @@ function titleOverlap(a: string, b: string): number {
   return matches / smaller;
 }
 
+/** Normalize categories like "Oracle Manipulation" and "oracle-manipulation" */
+function normalizeCategory(cat: string): string {
+  return cat.toLowerCase().replace(/[-_]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Category similarity: exact normalized match = 1, word overlap otherwise */
+function categorySimilarity(a: string, b: string): number {
+  const na = normalizeCategory(a);
+  const nb = normalizeCategory(b);
+  if (na === nb) return 1;
+  return wordOverlap(na, nb);
+}
+
+/** Normalize file path for comparison (strip leading src/ etc.) */
+function normalizeFile(f: string): string {
+  return f.replace(/^(src\/|contracts\/|\.\/)/i, "").toLowerCase();
+}
+
+/** Check if two findings reference the same file */
+function sameFile(a: Finding, b: Finding): boolean {
+  const fa = a.location?.file;
+  const fb = b.location?.file;
+  if (!fa || !fb) return false;
+  return normalizeFile(fa) === normalizeFile(fb);
+}
+
+/** Score how well an AI finding matches a human finding (0-1) */
+function matchScore(ai: Finding, human: Finding): number {
+  const catSim = categorySimilarity(ai.category, human.category);
+  const titleSim = wordOverlap(ai.title, human.title);
+  const descSim = wordOverlap(ai.description, human.description);
+  const fileMatch = sameFile(ai, human);
+  const textSim = titleSim * 0.4 + descSim * 0.6;
+
+  // Same file + strong text evidence = high confidence match
+  if (fileMatch && descSim >= 0.4) return 0.55 + textSim * 0.45;
+  if (fileMatch && descSim >= 0.3 && titleSim >= 0.2) return 0.45 + textSim * 0.45;
+
+  // Strong title match alone — require 3+ shared words to avoid
+  // generic security terms ("reentrancy", "token") creating false matches
+  const titleWordsA = extractWords(ai.title);
+  const titleWordsB = extractWords(human.title);
+  const sharedTitleWords = [...titleWordsA].filter((w) => titleWordsB.has(w)).length;
+  if (titleSim >= 0.5 && sharedTitleWords >= 3) return 0.4 + titleSim * 0.6;
+
+  // Strong description + title or category support (no file match)
+  if (descSim >= 0.45 && titleSim >= 0.25) {
+    return catSim * 0.1 + titleSim * 0.3 + descSim * 0.6;
+  }
+
+  // Default: conservative
+  return catSim * 0.1 + titleSim * 0.4 + descSim * 0.3;
+}
+
 function countMatches(aiFindings: Finding[], humanFindings: Finding[]): number {
+  const THRESHOLD = 0.5;
   let matched = 0;
   const used = new Set<number>();
+
   for (const hf of humanFindings) {
+    let bestIdx = -1;
+    let bestScore = 0;
     for (let i = 0; i < aiFindings.length; i++) {
       if (used.has(i)) continue;
-      const af = aiFindings[i]!;
-      const catMatch =
-        af.category.toLowerCase() === hf.category.toLowerCase();
-      const overlap = titleOverlap(af.title, hf.title);
-      if (catMatch && overlap > 0.5) {
-        matched++;
-        used.add(i);
-        break;
+      const score = matchScore(aiFindings[i]!, hf);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
       }
+    }
+    if (bestIdx >= 0 && bestScore >= THRESHOLD) {
+      matched++;
+      used.add(bestIdx);
     }
   }
   return matched;
@@ -90,10 +152,13 @@ interface Props {
 
 export function ComparisonView({ reports, onSelectModel }: Props) {
   const isMobile = useIsMobile();
-  const labels = reports.map(shortLabel);
 
   const humanReport = reports.find((r) => r.metadata.model === "human");
   const humanFindings = humanReport?.findings ?? [];
+
+  // Filter out human report from charts and dashboard data
+  const aiReports = reports.filter((r) => r.metadata.model !== "human");
+  const labels = aiReports.map(chartLabel);
 
   // Stacked bar: findings by severity
   const severityData = {
@@ -101,65 +166,32 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
     datasets: [
       {
         label: "Critical",
-        data: reports.map((r) => r.summary.critical),
+        data: aiReports.map((r) => r.summary.critical),
         backgroundColor: SEVERITY_COLORS.critical,
         borderRadius: 4,
       },
       {
         label: "High",
-        data: reports.map((r) => r.summary.high),
+        data: aiReports.map((r) => r.summary.high),
         backgroundColor: SEVERITY_COLORS.high,
         borderRadius: 4,
       },
       {
         label: "Medium",
-        data: reports.map((r) => r.summary.medium),
+        data: aiReports.map((r) => r.summary.medium),
         backgroundColor: SEVERITY_COLORS.medium,
         borderRadius: 4,
       },
       {
         label: "Low",
-        data: reports.map((r) => r.summary.low),
+        data: aiReports.map((r) => r.summary.low),
         backgroundColor: SEVERITY_COLORS.low,
         borderRadius: 4,
       },
       {
         label: "Informational",
-        data: reports.map((r) => r.summary.informational),
+        data: aiReports.map((r) => r.summary.informational),
         backgroundColor: SEVERITY_COLORS.informational,
-        borderRadius: 4,
-      },
-    ],
-  };
-
-  // Confidence distribution bar chart
-  const confidenceCounts = reports.map((r) => {
-    const counts = { high: 0, medium: 0, low: 0 };
-    r.findings.forEach((f) => {
-      if (f.confidence in counts) counts[f.confidence]++;
-    });
-    return counts;
-  });
-
-  const confidenceData = {
-    labels,
-    datasets: [
-      {
-        label: "High Confidence",
-        data: confidenceCounts.map((c) => c.high),
-        backgroundColor: CONFIDENCE_COLORS.high,
-        borderRadius: 4,
-      },
-      {
-        label: "Medium Confidence",
-        data: confidenceCounts.map((c) => c.medium),
-        backgroundColor: CONFIDENCE_COLORS.medium,
-        borderRadius: 4,
-      },
-      {
-        label: "Low Confidence",
-        data: confidenceCounts.map((c) => c.low),
-        backgroundColor: CONFIDENCE_COLORS.low,
         borderRadius: 4,
       },
     ],
@@ -171,8 +203,8 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
     datasets: [
       {
         label: "Duration (seconds)",
-        data: reports.map((r) => r.metadata.duration_seconds),
-        backgroundColor: reports.map(
+        data: aiReports.map((r) => r.metadata.duration_seconds),
+        backgroundColor: aiReports.map(
           (_, i) =>
             `hsl(${230 + i * 15}, 70%, ${55 + (i % 3) * 5}%)`
         ),
@@ -192,10 +224,10 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
     scales: {
       x: {
         ticks: {
-          color: "#888",
-          font: { size: isMobile ? 7 : 9 },
-          maxRotation: isMobile ? 90 : 45,
-          minRotation: isMobile ? 60 : 45,
+          color: "#ccc",
+          font: { size: isMobile ? 9 : 12 },
+          maxRotation: 0,
+          minRotation: 0,
           autoSkip: false,
         },
         grid: { color: "#1a1a2e" },
@@ -216,19 +248,38 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
     },
   };
 
-  // Score card stats
-  const totalFindings = reports.reduce(
+  // Score card stats (AI reports only)
+  const totalFindings = aiReports.reduce(
     (sum, r) => sum + r.summary.total_findings,
     0
   );
   const avgDuration = Math.round(
-    reports.reduce((sum, r) => sum + r.metadata.duration_seconds, 0) /
-      reports.length
+    aiReports.reduce((sum, r) => sum + r.metadata.duration_seconds, 0) /
+      aiReports.length
   );
-  const maxFindings = Math.max(...reports.map((r) => r.summary.total_findings));
-  const bestModel = reports.find(
-    (r) => r.summary.total_findings === maxFindings
-  );
+  // Fidelity: match count against human findings per model
+  const fidelityScores = aiReports
+    .map((r) => ({
+      report: r,
+      matches: countMatches(r.findings, humanFindings),
+    }))
+    .sort((a, b) => b.matches - a.matches);
+  const bestFidelity = fidelityScores[0];
+
+  // Fidelity chart data (sorted by matches descending)
+  const fidelityData = {
+    labels: fidelityScores.map((s) => chartLabel(s.report)),
+    datasets: [
+      {
+        label: "Matched Findings",
+        data: fidelityScores.map((s) => s.matches),
+        backgroundColor: fidelityScores.map((s) =>
+          s === bestFidelity ? "#22c55e" : "#6366f1"
+        ),
+        borderRadius: 6,
+      },
+    ],
+  };
 
   return (
     <div>
@@ -237,7 +288,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         {[
           {
             label: "Models Tested",
-            value: reports.length,
+            value: aiReports.length,
             color: "#6366f1",
           },
           {
@@ -251,10 +302,11 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             color: "#3b82f6",
           },
           {
-            label: "Most Findings",
-            value: bestModel ? shortLabel(bestModel) : "-",
-            sub: bestModel ? `${maxFindings} findings` : "",
+            label: "Best Fidelity vs Human",
+            value: bestFidelity ? shortLabel(bestFidelity.report) : "-",
+            sub: bestFidelity ? `${bestFidelity.matches}/${humanFindings.length} matched` : "",
             color: "#22c55e",
+            smallValue: true,
           },
         ].map((card, i) => (
           <div
@@ -273,7 +325,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             <div
               className="card-value"
               style={{
-                fontSize: 24,
+                fontSize: card.smallValue ? 14 : 24,
                 fontWeight: 700,
                 color: card.color,
               }}
@@ -290,27 +342,36 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
       </div>
 
       {/* Charts Grid */}
-      <div className="charts-grid">
+      <div className="charts-grid" style={{ width: "98vw", maxWidth: "98vw", marginLeft: "calc(-49vw + 50%)", boxSizing: "border-box", padding: 10 }}>
         {/* Findings by Severity */}
-        <ChartCard title="Findings by Severity">
-          <div className="bar-chart-container" style={{ height: 320 }}>
+        <div>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>
+            Findings by Severity
+          </h3>
+          <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
             <Bar data={severityData} options={stackedOptions as any} />
           </div>
-        </ChartCard>
-
-        {/* Confidence Distribution */}
-        <ChartCard title="Confidence Distribution">
-          <div className="bar-chart-container" style={{ height: 320 }}>
-            <Bar data={confidenceData} options={stackedOptions as any} />
-          </div>
-        </ChartCard>
+        </div>
 
         {/* Duration */}
-        <ChartCard title="Audit Duration (seconds)">
-          <div className="bar-chart-container" style={{ height: 320 }}>
+        <div>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>
+            Audit Duration (seconds)
+          </h3>
+          <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
             <Bar data={durationData} options={chartOptions as any} />
           </div>
-        </ChartCard>
+        </div>
+
+        {/* Fidelity vs Human */}
+        <div>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>
+            Fidelity vs Human Audit ({humanFindings.length} findings)
+          </h3>
+          <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
+            <Bar data={fidelityData} options={chartOptions as any} />
+          </div>
+        </div>
       </div>
 
       {/* Leaderboard Table */}
@@ -334,9 +395,11 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         >
           Leaderboard
         </div>
+        <div style={{ overflowX: "auto" }}>
         <table
           style={{
             width: "100%",
+            minWidth: 900,
             borderCollapse: "collapse",
             fontSize: 13,
           }}
@@ -380,27 +443,14 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                 Duration
               </th>
               <th style={{ padding: "10px 16px", textAlign: "center" }}>
-                High Conf %
-              </th>
-              <th style={{ padding: "10px 16px", textAlign: "center" }}>
                 Diff
               </th>
               <th style={{ padding: "10px 16px" }}></th>
             </tr>
           </thead>
           <tbody>
-            {reports.map((r, i) => {
-              const highConf = r.findings.filter(
-                (f) => f.confidence === "high"
-              ).length;
-              const confPct =
-                r.findings.length > 0
-                  ? Math.round((highConf / r.findings.length) * 100)
-                  : 0;
-              const isHuman = r.metadata.model === "human";
-              const diffLabel = isHuman
-                ? "\u2014"
-                : `${countMatches(r.findings, humanFindings)}/${humanFindings.length}`;
+            {aiReports.map((r, i) => {
+              const diffLabel = `${countMatches(r.findings, humanFindings)}/${humanFindings.length}`;
               return (
                 <tr
                   key={i}
@@ -506,37 +556,8 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                     style={{
                       padding: "12px 16px",
                       textAlign: "center",
-                    }}
-                  >
-                    <span
-                      style={{
-                        padding: "2px 8px",
-                        borderRadius: 10,
-                        fontSize: 11,
-                        fontWeight: 600,
-                        background:
-                          confPct >= 70
-                            ? "#22c55e20"
-                            : confPct >= 40
-                              ? "#eab30820"
-                              : "#ef444420",
-                        color:
-                          confPct >= 70
-                            ? "#22c55e"
-                            : confPct >= 40
-                              ? "#eab308"
-                              : "#ef4444",
-                      }}
-                    >
-                      {confPct}%
-                    </span>
-                  </td>
-                  <td
-                    style={{
-                      padding: "12px 16px",
-                      textAlign: "center",
-                      color: isHuman ? "#666680" : "#a5b4fc",
-                      fontWeight: isHuman ? 400 : 600,
+                      color: "#a5b4fc",
+                      fontWeight: 600,
                       fontSize: 12,
                     }}
                   >
@@ -558,38 +579,9 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             })}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );
 }
 
-function ChartCard({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      style={{
-        background: "#12121f",
-        border: "1px solid #2a2a4a",
-        borderRadius: 12,
-        padding: 20,
-      }}
-    >
-      <h3
-        style={{
-          fontSize: 14,
-          fontWeight: 600,
-          color: "#a5b4fc",
-          marginBottom: 16,
-        }}
-      >
-        {title}
-      </h3>
-      {children}
-    </div>
-  );
-}

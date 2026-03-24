@@ -1,0 +1,26 @@
+[0;36m[INFO][0m  Starting benchmark: claude-code-ai-claude-opus-4.6
+[0;36m[INFO][0m    Target:  notional-finance (/home/vscode/projects/security-audit-skills-benchmark/targets/notional-finance/repo)
+[0;36m[INFO][0m    Harness: claude-code
+[0;36m[INFO][0m    Model:   claude-opus-4.6
+[0;36m[INFO][0m    Report:  /home/vscode/projects/security-audit-skills-benchmark/reports/notional-finance/run-1/claude-code-ai-claude-opus-4.6.json
+[0;36m[INFO][0m    Run:     run-1
+[0;36m[INFO][0m  Invoking claude-code...
+Audit complete. Report written to `/home/vscode/projects/security-audit-skills-benchmark/reports/notional-finance/run-1/claude-code-ai-claude-opus-4.6.json`.
+
+## Summary: 9 findings (0 Critical, 2 High, 7 Medium)
+
+| # | Severity | Confidence | Title |
+|---|----------|------------|-------|
+| F-001 | **High** | 90 | Liquidator Reward Theft via Incorrect Escrow Flag in `_postLiquidation` |
+| F-002 | **High** | 90 | Missing Chainlink Oracle Staleness Check in PendlePTOracle and Curve2TokenOracle |
+| F-003 | Medium | 80 | Hardcoded Zero Slippage on First Hop of sUSDe Redemption Path |
+| F-004 | Medium | 80 | `block.timestamp` Deadline Provides Zero MEV Protection |
+| F-005 | Medium | 75 | Curve LP Oracle Spot Price Check Bypassable via Pool Balance Manipulation |
+| F-006 | Medium | 80 | `healthFactor` Uses Floor Division for Borrowed Amount (should be ceiling) |
+| F-007 | Medium | 75 | Taylor Approximation Systematically Undercharges Fees |
+| F-008 | Medium | 75 | TimelockUpgradeableProxy Missing State Cleanup After Upgrade |
+| F-009 | Medium | 75 | Delegatecall Fallback Uses Blocklist Instead of Allowlist |
+
+**Key finding:** F-001 is the most impactful — when liquidating a position with a pending withdraw, the `didTokenize` flag incorrectly causes the liquidator's reward debt to be skipped, enabling theft of historical rewards. 5 of 8 agents independently identified this issue.
+[0;32m[OK][0m    Benchmark complete: claude-code-ai-claude-opus-4.6 (612s)
+[0;32m[OK][0m    Report saved to: /home/vscode/projects/security-audit-skills-benchmark/reports/notional-finance/run-1/claude-code-ai-claude-opus-4.6.json

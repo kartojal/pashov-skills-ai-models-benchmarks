@@ -1,0 +1,70 @@
+Report written and validated. Here is the final audit output:
+
+---
+
+# 🔐 Security Review — notional-finance
+
+## Scope
+
+| | |
+|---|---|
+| **Mode** | ALL (31 files, ~1,959 nSLOC) |
+| **Agents run** | 8 parallel specialized agents |
+| **Confidence threshold** | 75 |
+
+---
+
+## Findings
+
+**[95] F-001 — `DineroWithdrawRequestManager`: `uint16` nonce overflow → permanent withdrawal DoS** `[HIGH]` · agents: [5]
+
+`s_batchNonce` is `uint16` (max 65,535). In Solidity 0.8.x, `++s_batchNonce` on the 65,536th call reverts with a checked overflow, permanently bricking all Dinero vault withdrawal initiations.
+
+**Fix:** `uint16 private s_batchNonce` → `uint64 private s_batchNonce` (adjust `requestId` bit-packing)
+
+---
+
+**[88] F-002 — `DineroWithdrawRequestManager.canFinalizeWithdrawRequest`: inverted condition** `[HIGH]` · agents: [4]
+
+Comment says "can finalize if totalAssets > outstandingRedemptions" but code returns `outstandingRedemptions > totalAssets`. This blocks ALL withdrawals when Pirex is healthy and allows finalization when underfunded, potentially marking requests as `finalized=true` with `totalWithdraw=0`.
+
+**Fix:** `return totalAssets >= PirexETH.outstandingRedemptions()`
+
+---
+
+**[82] F-003 — `AbstractRewardManager.updateAccountRewards`: vault claim delta permanently overwritten by stale emission accumulation** `[HIGH]` · agents: [4]
+
+`_claimVaultRewards` writes `X + claimDelta` to storage but doesn't update the outer `state[]` memory copy. `_accumulateSecondaryRewardViaEmissionRate` then reads the stale `X`, writes `X + emissionDelta` to storage, permanently erasing the claim delta for any token with both a vault reward pool and an emission rate.
+
+**Fix:** Reload `state[i] = _getVaultRewardStateSlot()[i]` after `_claimVaultRewards` before the emission accumulation loop.
+
+---
+
+**[75] F-004 — `Curve2TokenOracle`/`PendlePTOracle`: missing Chainlink staleness check** `[MEDIUM]` · agents: [2]
+
+`latestRoundData()` only validates `answer > 0`; no `updatedAt` or `answeredInRound` check. Stale prices flow into Morpho's collateral oracle, enabling over-borrowing or blocking liquidations.
+
+---
+
+**[75] F-005 — `AbstractRewardManager`: 1-call accumulation lag causes exiting users to forfeit final interval** `[MEDIUM]` · agents: [3]
+
+`_claimRewardToken` uses the pre-accumulation memory snapshot; users burning all shares in the same call lose the current interval's rewards permanently (no follow-up call possible).
+
+---
+
+**[75] F-006 — `AbstractRewardManager`: fully liquidated escrowed account's accrued rewards deleted without distribution** `[MEDIUM]` · agents: [2]
+
+`sharesInEscrow && accountSharesAfter == 0` path deletes reward debt with `continue` — skipping `_claimRewardToken` — burning the liquidated user's pending rewards.
+
+---
+
+## Summary
+
+| Severity | Count |
+|---|---|
+| High | 3 |
+| Medium | 3 |
+| **Total** | **6** |
+
+**Report written to:** `/home/vscode/projects/security-audit-skills-benchmark/reports/notional-finance/run-1/claude-code-ai-claude-sonnet-4.6.json`
+**Duration:** 1,517 seconds (~25 minutes)

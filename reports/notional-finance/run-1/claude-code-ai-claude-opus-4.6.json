@@ -1,0 +1,174 @@
+{
+  "metadata": {
+    "model": "claude-opus-4.6",
+    "harness": "claude-code",
+    "target": "notional-finance",
+    "timestamp": "2026-03-24T00:07:17Z",
+    "duration_seconds": 612,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 9,
+    "critical": 0,
+    "high": 2,
+    "medium": 7,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Liquidator Reward Theft via Incorrect Escrow Flag in _postLiquidation",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Reward Accounting Error",
+      "description": "In RewardManagerMixin._postLiquidation (src/rewards/RewardManagerMixin.sol:55-60), the `didTokenize` flag from `__postLiquidation` is passed as `sharesInEscrow` for BOTH the liquidator and the liquidated account when calling `_updateAccountRewards`. In AbstractRewardManager.updateAccountRewards (src/rewards/AbstractRewardManager.sol:156), the short-circuit `if (sharesInEscrow && accountSharesAfter > 0) return rewards` causes the liquidator's reward debt to never be initialized when `didTokenize=true` (liquidated account had a pending withdraw request). Since `accountSharesAfter = t_Liquidator_SharesBefore + sharesToLiquidator > 0`, the function returns early. The liquidator's `rewardDebt` remains 0. When the liquidator later claims rewards via `_claimRewardToken`, the computation `rewardToClaim = (accountSharesBefore * rewardsPerVaultShare / DEFAULT_PRECISION) - rewardDebt` yields all historically accumulated rewards proportional to their shares, stealing rewards from other depositors. The same issue affects the liquidated account during partial liquidation: their reward debt update is also short-circuited, causing them to lose accrued rewards on final exit.",
+      "location": {
+        "file": "src/rewards/RewardManagerMixin.sol",
+        "lines": "44-70"
+      },
+      "recommendation": "Pass `sharesInEscrow: false` for the liquidator's `_updateAccountRewards` call since the liquidator's shares are not escrowed. For the liquidated account in partial liquidation, handle escrow state separately so the reward debt is properly updated for remaining non-escrowed shares.",
+      "agents_reporting": [
+        "vector-scan-agent",
+        "economic-security-agent",
+        "execution-trace-agent",
+        "invariant-agent",
+        "first-principles-agent"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "Missing Chainlink Oracle Staleness Check in PendlePTOracle and Curve2TokenOracle",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Stale Oracle Data",
+      "description": "Both PendlePTOracle._calculateBaseToQuote (src/oracles/PendlePTOracle.sol:82-83) and Curve2TokenOracle._calculateBaseToQuote (src/oracles/Curve2TokenOracle.sol:101-102) call `baseToUSDOracle.latestRoundData()` and only validate `require(baseToUSD > 0, 'Chainlink Rate Error')`. Neither checks the `updatedAt` timestamp for staleness, nor validates `answeredInRound >= roundId`. If the Chainlink feed becomes stale (e.g., during L2 sequencer issues, feed deprecation, or temporary oracle outages), the oracle will return an outdated price. Since these oracles feed into Morpho health factor calculations via the vault's `price()` function, stale prices can enable: (1) over-borrowing against inflated stale collateral values, (2) prevention of valid liquidations when the stale price shows the borrower as healthy, or (3) premature liquidations if the stale price is lower than current market price. The AbstractCustomOracle base contract has a sequencer uptime check, but this only validates the L2 sequencer is up, not that individual feed prices are fresh.",
+      "location": {
+        "file": "src/oracles/PendlePTOracle.sol",
+        "lines": "68-89"
+      },
+      "recommendation": "Add staleness validation after `latestRoundData()`: `require(block.timestamp - updatedAt < MAX_STALENESS, 'Stale Price')` where MAX_STALENESS is configured per feed (e.g., 1 hour for high-frequency feeds, 24 hours for low-frequency ones). Also add `require(answeredInRound >= roundId)` to detect incomplete rounds.",
+      "agents_reporting": [
+        "vector-scan-agent",
+        "periphery-agent"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "Hardcoded Zero Slippage on First Hop of sUSDe Redemption Path",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Missing Slippage Protection",
+      "description": "In PendlePT_sUSDe._executeInstantRedemption (src/staking/PendlePT_sUSDe.sol:38), the sUSDe-to-sDAI Curve trade is hardcoded with `limit: 0` and a comment acknowledging no slippage guard on the first leg. While the second leg (sDAI→DAI→asset) enforces user-supplied `minPurchaseAmount`, the first leg is fully exposed to sandwich attacks. An MEV bot can front-run by selling sDAI into the sUSDe/sDAI pool, the redemption executes at a worse rate getting fewer sDAI, and the bot back-runs. The user's final slippage check on the second leg may still pass because they set a tolerance, but the value extracted from the first hop is pure profit for the attacker. The combined effect is that users systematically receive less value than they should for the first hop.",
+      "location": {
+        "file": "src/staking/PendlePT_sUSDe.sol",
+        "lines": "33-48"
+      },
+      "recommendation": "Derive an oracle-based minimum sDAI output for the first hop trade using `TRADING_MODULE.getOraclePrice(sUSDe, sDAI)`, or combine both hops into a single atomic slippage check that computes the expected end-to-end output.",
+      "agents_reporting": [
+        "vector-scan-agent"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "block.timestamp Deadline Provides Zero MEV Protection on All Trade Operations",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Missing Deadline Protection",
+      "description": "All trade operations throughout the protocol use `deadline: block.timestamp` (src/staking/PendlePT_sUSDe.sol:40,60; src/withdraws/AbstractWithdrawRequestManager.sol:283; and all AbstractSingleSidedLP trade paths). Since `block.timestamp` is set by the block producer at inclusion time, `require(block.timestamp <= trade.deadline)` always passes regardless of when the transaction is mined. A transaction stuck in the mempool can be executed at any future block at a potentially much worse price. While user-supplied `minPurchaseAmount` provides some protection, delayed execution combined with market movements can cause the transaction to execute within slippage bounds but at a significantly worse rate than intended.",
+      "location": {
+        "file": "src/staking/PendlePT_sUSDe.sol",
+        "lines": "40"
+      },
+      "recommendation": "Accept a user-provided absolute deadline parameter (e.g., `block.timestamp + 300` computed off-chain) and pass it through the trade calldata rather than using `block.timestamp` at execution time.",
+      "agents_reporting": [
+        "economic-security-agent"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "Curve LP Oracle Spot Price Check Can Be Bypassed via Pool Balance Manipulation",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Oracle Manipulation",
+      "description": "Curve2TokenOracle._lpTokenValue (src/oracles/Curve2TokenOracle.sol:57-58) reads raw pool balances via `ICurvePool(LP_TOKEN).balances(0/1)` to calculate LP token value. The spot price check via `get_dy` (line 77-79) only validates the marginal swap rate for a fixed `dyAmount`, not the overall pool composition. An attacker with significant capital can add massive single-sided liquidity to skew pool balances while keeping the marginal rate (for the configured `dyAmount`) within the tolerance bounds (LOWER_LIMIT_MULTIPLIER to UPPER_LIMIT_MULTIPLIER). The `_calculateLPTokenValue` in AbstractLPOracle (src/oracles/AbstractLPOracle.sol:85-104) then computes the LP token value using skewed balances at oracle prices, potentially overvaluing the LP token. On highly leveraged positions (e.g., 90% LLTV), even a small overvaluation enables significant over-borrowing.",
+      "location": {
+        "file": "src/oracles/Curve2TokenOracle.sol",
+        "lines": "55-83"
+      },
+      "recommendation": "Add a check on pool balance ratios (e.g., balances[0]/balances[1] must be within a configured range), or use Curve's `get_virtual_price()` combined with oracle prices for a manipulation-resistant valuation, or reduce the tolerance band on the spot price check.",
+      "agents_reporting": [
+        "economic-security-agent",
+        "first-principles-agent"
+      ]
+    },
+    {
+      "id": "F-006",
+      "title": "MorphoLendingRouter.healthFactor Uses Floor Division for Borrowed Amount",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Rounding Direction Error",
+      "description": "In MorphoLendingRouter.healthFactor (src/routers/MorphoLendingRouter.sol:279), the borrowed amount is calculated as `borrowed = (uint256(position.borrowShares) * uint256(market.totalBorrowAssets)) / uint256(market.totalBorrowShares)` which rounds DOWN. Morpho Blue internally uses ceiling division (`mulDivUp`) for borrower debt calculations. This discrepancy means `healthFactor` understates the actual debt. For example: with borrowShares=1000, totalBorrowAssets=10007, totalBorrowShares=10000, the actual debt should be ceil(1000*10007/10000)=1001, but this code computes floor(1000.7)=1000. For positions exactly at the liquidation boundary, this 1-token undercounting makes `borrowed <= maxBorrow` when the real debt exceeds `maxBorrow`, preventing valid liquidations. This also affects `forceWithdraw` which uses the same health factor check.",
+      "location": {
+        "file": "src/routers/MorphoLendingRouter.sol",
+        "lines": "278-279"
+      },
+      "recommendation": "Use ceiling division: `borrowed = (uint256(position.borrowShares) * uint256(market.totalBorrowAssets) + uint256(market.totalBorrowShares) - 1) / uint256(market.totalBorrowShares)` to match Morpho Blue's internal accounting.",
+      "agents_reporting": [
+        "math-precision-agent"
+      ]
+    },
+    {
+      "id": "F-007",
+      "title": "Taylor Approximation of Exponential Fee Decay Systematically Undercharges Fees",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Precision Loss",
+      "description": "AbstractYieldStrategy._calculateAdditionalFeesInYieldToken (src/AbstractYieldStrategy.sol:319) uses a 3-term Taylor series to approximate e^x: `eToTheX = DEFAULT_PRECISION + x + (x * x) / (2 * DEFAULT_PRECISION) + (x * x * x) / (6 * DEFAULT_PRECISION * DEFAULT_PRECISION)`. This systematically underestimates e^x since all omitted terms are positive. For feeRate=0.2e18 (20%) and 1 year: true e^0.2 = 1.22140e18, Taylor gives 1.22133e18, an underestimate of ~0.006%. For feeRate=0.5e18 (50%) and 1 year: true e^0.5 = 1.64872e18, Taylor gives 1.64583e18, underestimate of ~0.175%. The underestimate means `postFeeUserHeldYieldTokens` is higher than it should be, so the protocol collects fewer fees than intended. Over years of operation with significant TVL, this compounds into meaningful fee under-collection, effectively subsidizing vault shareholders at the protocol's expense.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "311-323"
+      },
+      "recommendation": "Add more Taylor series terms (5+ terms for better accuracy), or enforce maximum accrual intervals to keep x small via more frequent `_accrueFees()` calls, or use a library with higher-precision exponential computation.",
+      "agents_reporting": [
+        "math-precision-agent",
+        "periphery-agent"
+      ]
+    },
+    {
+      "id": "F-008",
+      "title": "TimelockUpgradeableProxy Does Not Clear State After Upgrade Execution",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Missing State Cleanup",
+      "description": "TimelockUpgradeableProxy.executeUpgrade (src/proxy/TimelockUpgradeableProxy.sol:54-58) calls `ERC1967Utils.upgradeToAndCall(newImplementation, data)` but never clears `newImplementation` or `upgradeValidAt` after the upgrade completes. This means `executeUpgrade` can be called again at any time by the upgrade admin to re-execute the same upgrade with different `data` calldata. Since `upgradeToAndCall` triggers the post-upgrade callback with the provided data, this allows: (1) repeated execution of upgrade callbacks potentially corrupting state, (2) an admin (or compromised admin key) re-triggering the callback after the legitimate upgrade. The timelock delay, designed to give users time to review and exit, is effectively bypassed for subsequent calls since `upgradeValidAt` remains in the past.",
+      "location": {
+        "file": "src/proxy/TimelockUpgradeableProxy.sol",
+        "lines": "54-58"
+      },
+      "recommendation": "Add `delete newImplementation; delete upgradeValidAt;` after the successful `upgradeToAndCall` to ensure each upgrade can only be executed once.",
+      "agents_reporting": [
+        "periphery-agent"
+      ]
+    },
+    {
+      "id": "F-009",
+      "title": "Delegatecall Fallback Uses Single-Selector Blocklist Instead of Allowlist",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Access Control",
+      "description": "RewardManagerMixin.fallback (src/rewards/RewardManagerMixin.sol:179-193) delegates ALL calls (except `updateAccountRewards`) to REWARD_MANAGER via `_delegateCall`. The only check is `require(msg.sig != IRewardManager.updateAccountRewards.selector)`. While current REWARD_MANAGER functions have their own access control (`migrateRewardPool` and `updateRewardToken` require `onlyUpgradeAdmin`, `claimRewardTokens` is intentionally public), this blocklist pattern means any new function added to a future REWARD_MANAGER deployment without proper access control would be immediately callable by anyone through the vault's fallback, executing in the vault's storage context. Additionally, `claimRewardTokens` being callable by anyone allows external actors to manipulate reward accumulation timing by forcing vault-level reward claims at strategic moments.",
+      "location": {
+        "file": "src/rewards/RewardManagerMixin.sol",
+        "lines": "179-193"
+      },
+      "recommendation": "Replace the single-selector blocklist with an explicit allowlist of permitted selectors, or add a modifier to the fallback that restricts state-changing delegated calls to authorized callers.",
+      "agents_reporting": [
+        "access-control-agent",
+        "periphery-agent",
+        "first-principles-agent"
+      ]
+    }
+  ],
+  "raw_output": "# Security Review — Notional Finance Leveraged Vault Strategies\n\n---\n\n## Scope\n\n|                                  |                                                        |\n| -------------------------------- | ------------------------------------------------------ |\n| **Mode**                         | ALL                                                    |\n| **Files reviewed**               | `AbstractYieldStrategy.sol` · `AbstractCustomOracle.sol` · `AbstractLPOracle.sol`<br>`Curve2TokenOracle.sol` · `PendlePTOracle.sol` · `AddressRegistry.sol`<br>`Initializable.sol` · `TimelockUpgradeableProxy.sol` · `AbstractRewardManager.sol`<br>`ConvexRewardManager.sol` · `RewardManagerMixin.sol` · `AbstractLendingRouter.sol`<br>`MorphoLendingRouter.sol` · `AbstractSingleSidedLP.sol` · `CurveConvex2Token.sol`<br>`AbstractStakingStrategy.sol` · `PendlePTLib.sol` · `PendlePT.sol`<br>`PendlePT_sUSDe.sol` · `StakingStrategy.sol` · `Constants.sol`<br>`TokenUtils.sol` · `TypeConvert.sol` · `AbstractWithdrawRequestManager.sol`<br>`ClonedCooldownHolder.sol` · `Dinero.sol` · `Ethena.sol`<br>`EtherFi.sol` · `GenericERC20.sol` · `GenericERC4626.sol` · `Origin.sol` |\n| **Confidence threshold (1-100)** | 75                                                     |\n\n---\n\n## Findings\n\n[90] **1. Liquidator Reward Theft via Incorrect Escrow Flag in _postLiquidation**\n\n`RewardManagerMixin._postLiquidation` · Confidence: 90\n\n**Description**\nWhen liquidating an escrowed position, `didTokenize` is passed as `sharesInEscrow` for the liquidator, causing `updateAccountRewards` to short-circuit at line 156 without initializing the liquidator's reward debt. The liquidator can then claim all historically accumulated rewards, stealing from other depositors.\n\n**Fix**\n\n```diff\n        _updateAccountRewards({\n            account: liquidator,\n            accountSharesBefore: t_Liquidator_SharesBefore,\n            accountSharesAfter: t_Liquidator_SharesBefore + sharesToLiquidator,\n            effectiveSupplyBefore: effectiveSupplyBefore,\n-           sharesInEscrow: didTokenize\n+           sharesInEscrow: false\n        });\n```\n---\n\n[90] **2. Missing Chainlink Oracle Staleness Check in PendlePTOracle and Curve2TokenOracle**\n\n`PendlePTOracle._calculateBaseToQuote` / `Curve2TokenOracle._calculateBaseToQuote` · Confidence: 90\n\n**Description**\nBoth oracles call `baseToUSDOracle.latestRoundData()` and only check `require(baseToUSD > 0)` without validating `updatedAt` for staleness, enabling stale prices to be used for collateral valuation in Morpho health factor calculations.\n\n**Fix**\n\n```diff\n  (roundId, baseToUSD, startedAt, updatedAt, answeredInRound) = baseToUSDOracle.latestRoundData();\n  require(baseToUSD > 0, \"Chainlink Rate Error\");\n+ require(block.timestamp - updatedAt < MAX_STALENESS, \"Stale Price\");\n+ require(answeredInRound >= roundId, \"Incomplete Round\");\n```\n---\n\n[80] **3. Hardcoded Zero Slippage on First Hop of sUSDe Redemption Path**\n\n`PendlePT_sUSDe._executeInstantRedemption` · Confidence: 80\n\n**Description**\nThe sUSDe-to-sDAI Curve trade uses hardcoded `limit: 0`, exposing the first hop to sandwich attacks even though the final output has user-supplied slippage protection.\n\n**Fix**\n\n```diff\n  Trade memory sDAITrade = Trade({\n      tradeType: TradeType.EXACT_IN_SINGLE,\n      sellToken: address(sUSDe),\n      buyToken: address(sDAI),\n      amount: netTokenOut,\n-     limit: 0,\n+     limit: _getMinSDAIOutput(netTokenOut),\n      deadline: block.timestamp,\n      exchangeData: ...\n  });\n```\n---\n\n[80] **4. block.timestamp Deadline Provides Zero MEV Protection**\n\n`PendlePT_sUSDe._executeInstantRedemption` / all trade paths · Confidence: 80\n\n**Description**\nAll trade operations use `deadline: block.timestamp` which always passes since the check evaluates at inclusion time, providing no protection against delayed mempool execution.\n\n**Fix**\n\n```diff\n- deadline: block.timestamp,\n+ deadline: userProvidedDeadline,\n```\n---\n\n[80] **5. MorphoLendingRouter.healthFactor Uses Floor Division for Borrowed Amount**\n\n`MorphoLendingRouter.healthFactor` · Confidence: 80\n\n**Description**\nBorrowed amount uses floor division instead of ceiling, understating debt by up to 1 token and potentially preventing valid liquidations near the threshold.\n\n**Fix**\n\n```diff\n- borrowed = (uint256(position.borrowShares) * uint256(market.totalBorrowAssets)) / uint256(market.totalBorrowShares);\n+ borrowed = (uint256(position.borrowShares) * uint256(market.totalBorrowAssets) + uint256(market.totalBorrowShares) - 1) / uint256(market.totalBorrowShares);\n```\n---\n\n[75] **6. Curve LP Oracle Spot Price Check Can Be Bypassed via Pool Balance Manipulation**\n\n`Curve2TokenOracle._lpTokenValue` · Confidence: 75\n\n**Description**\nThe spot price check via `get_dy` validates only the marginal rate for a fixed `dyAmount`, not overall pool composition, allowing significant balance skewing within tolerance bounds.\n\n---\n\n[75] **7. Taylor Approximation of Exponential Fee Decay Systematically Undercharges Fees**\n\n`AbstractYieldStrategy._calculateAdditionalFeesInYieldToken` · Confidence: 75\n\n**Description**\nThe 3-term Taylor series approximation of e^x underestimates fees by 0.006-0.175% depending on fee rate and accrual period, systematically under-collecting protocol fees.\n\n---\n\n[75] **8. TimelockUpgradeableProxy Does Not Clear State After Upgrade**\n\n`TimelockUpgradeableProxy.executeUpgrade` · Confidence: 75\n\n**Description**\n`newImplementation` and `upgradeValidAt` are not cleared after upgrade, allowing repeated execution of the same upgrade callback with different data.\n\n---\n\n[75] **9. Delegatecall Fallback Uses Single-Selector Blocklist Instead of Allowlist**\n\n`RewardManagerMixin.fallback` · Confidence: 75\n\n**Description**\nThe fallback delegates all unrecognized selectors except `updateAccountRewards` to REWARD_MANAGER, relying entirely on the target's own access control for security.\n\n---\n\nFindings List\n\n| # | Confidence | Title |\n|---|---|---|\n| 1 | [90] | Liquidator Reward Theft via Incorrect Escrow Flag in _postLiquidation |\n| 2 | [90] | Missing Chainlink Oracle Staleness Check in PendlePTOracle and Curve2TokenOracle |\n| 3 | [80] | Hardcoded Zero Slippage on First Hop of sUSDe Redemption Path |\n| 4 | [80] | block.timestamp Deadline Provides Zero MEV Protection |\n| 5 | [80] | MorphoLendingRouter.healthFactor Uses Floor Division for Borrowed Amount |\n| 6 | [75] | Curve LP Oracle Spot Price Check Can Be Bypassed via Pool Balance Manipulation |\n| 7 | [75] | Taylor Approximation of Exponential Fee Decay Systematically Undercharges Fees |\n| 8 | [75] | TimelockUpgradeableProxy Does Not Clear State After Upgrade |\n| 9 | [75] | Delegatecall Fallback Uses Single-Selector Blocklist Instead of Allowlist |\n\n---\n\n## Leads\n\n_Vulnerability trails with concrete code smells where the full exploit path could not be completed in one analysis pass. These are not false positives — they are high-signal leads for manual review. Not scored._\n\n- **Transient State Manipulation via price(address)** — `AbstractYieldStrategy.price(address)` — Code smells: non-view external function modifies transient `t_CurrentAccount` without authentication or reentrancy protection — If called during an in-flight operation via callback, could temporarily affect valuation in `convertToAssets`. No concrete reentrancy path verified.\n- **Withdraw Request Valuation Discontinuity** — `AbstractSingleSidedLP.convertToAssets` — Code smells: discrete switch from LP-based to individual-token-oracle-based valuation during `initiateWithdraw` — Could create exploitable price discontinuity for health factor manipulation, but requires oracle manipulation of individual tokens.\n- **Partial Withdraw Rounding Dust Lock** — `AbstractWithdrawRequestManager.finalizeAndRedeemWithdrawRequest` — Code smells: double rounding-down in tokenization split and finalization — Repeated partial withdrawals can leave dust permanently locked, but amounts are sub-wei per operation.\n- **CurveV1 Reentrancy Check May Not Trigger Lock** — `CurveConvexLib.checkReentrancyContext` — Code smells: `remove_liquidity(0, minAmounts)` with amount=0 may short-circuit in some Curve V1 implementations without triggering the reentrancy guard — Could allow oracle manipulation during liquidation price checks.\n\n---\n\n> ⚠️ This review was performed by an AI assistant. AI analysis can never verify the complete absence of vulnerabilities and no guarantee of security is given. Team security reviews, bug bounty programs, and on-chain monitoring are strongly recommended. For a consultation regarding your projects' security, visit [https://www.pashov.com](https://www.pashov.com)\n"
+}

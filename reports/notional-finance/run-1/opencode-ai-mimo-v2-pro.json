@@ -1,0 +1,101 @@
+{
+  "metadata": {
+    "model": "xiaomi/mimo-v2-pro",
+    "harness": "opencode",
+    "target": "notional-finance",
+    "timestamp": "2026-03-24T14:31:17Z",
+    "duration_seconds": 208,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 5,
+    "critical": 1,
+    "high": 2,
+    "medium": 2,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Permanent lock of funds after Pendle PT expires without whitelisted token withdraw",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Locked Funds",
+      "description": "In PendlePT.sol, when a PT token expires, the contract requires redeeming it and then initiating a withdraw request through the withdraw request manager. However, there is no validation that TOKEN_OUT_SY is whitelisted as a valid token in the withdraw request manager before initiating the withdraw. If this validation is missing, when the PT expires, users will be unable to exit their positions properly as the _initiateWithdraw function will fail due to the withdraw request manager rejecting the token. This results in permanently locked user funds with no recovery path, as the PendlePT strategy assumes it can always initialize withdraws with the TOKEN_OUT_SY token through the withdraw request manager.",
+      "location": {
+        "file": "src/staking/PendlePT.sol",
+        "lines": "127-145"
+      },
+      "recommendation": "Add a validation during contract initialization to verify that TOKEN_OUT_SY is properly whitelisted in the withdraw request manager. Specifically, in the constructor of PendlePT.sol, check that withdrawRequestManager.isApprovedVault(TOKEN_OUT_SY) returns true. Alternatively, provide a recovery mechanism to handle expired PTs when TOKEN_OUT_SY is not whitelisted.",
+      "agents_reporting": [
+        "Cross-Protocol Integration Analyst"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "Morpho price manipulation via strategy's oracle function exposes collateral to liquidation",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Oracle Manipulation",
+      "description": "The price function in AbstractYieldStrategy.sol is used by Morpho as an oracle without any freshness checks or manipulation resistance. When the price is called with the borrower parameter, it uses t_CurrentAccount to potentially modify price valuation logic in derived contracts. This allows a malicious entity to manipulate the reported price by altering the state during valuation, potentially triggering unfair liquidations. In particular, there's no protection against flash loan attacks that could temporarily manipulate the price of underlying yield tokens. Unlike Chainlink oracles that provide staleness protection, this implementation provides a direct manipulation vector that could be exploited to force liquidations at favorable rates for attackers, especially for less liquid yield tokens.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "122-133"
+      },
+      "recommendation": "Add staleness protection and manipulation resistance to the oracle implementation. Implement a TWAP (Time-Weighted Average Price) mechanism or use Chainlink price feeds as additional validation. Consider implementing circuit breakers that prevent large price movements beyond certain thresholds within short time periods. Additionally, add a timelock or cooldown period between significant price movements to prevent flash loan attacks.",
+      "agents_reporting": [
+        "Oracle Security Analyst"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "Share calculation rounding errors can be exploited via precision mismatch in tokenized withdrawals",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "Precision Loss",
+      "description": "In AbstractWithdrawRequestManager.sol, the tokenizeWithdrawRequest function calculates the amount of yield tokens to transfer from one account to another when tokenizing a partial withdraw request. The calculation uses integer division which rounds down: yieldTokenAmount = s_withdraw.yieldTokenAmount * sharesAmount / s_withdraw.sharesAmount. An attacker can exploit this by tokenizing small amounts of shares multiple times, causing the recipient to receive less yield tokens than they should due to accumulated rounding errors. Since the value of yield tokens can be significantly larger than the shares, the loss can be substantial. This attack is made worse when there's a large difference in decimal precision between tokens or when the ratio of yield tokens to shares is high.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "195-196"
+      },
+      "recommendation": "Implement a more precise calculation method that accounts for rounding errors. Consider using a proportional calculation approach that tracks the total amount transferred to prevent accumulated losses. Another solution would be to implement a minimum tokenization threshold to prevent exploitation through many small transactions. Alternatively, consider adding a dust collection mechanism that ensures any remaining small amounts after the final tokenization are properly assigned.",
+      "agents_reporting": [
+        "Math Precision Auditor"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "Improper validation in reward distribution leads to index inflation attack",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Reward Manipulation",
+      "description": "In RewardManagerMixin.sol, the _updateAccountRewards function is used to track and distribute rewards to users based on their share of the pool. However, the implementation fails to properly validate the state before and after reward updates. An attacker can manipulate the reward distribution by entering a position with minimal shares, waiting for rewards to accrue, then exploiting the reward distribution mechanism to claim a disproportionate amount of rewards. This is possible because the reward calculation uses the share ratio at specific points in time without accounting for changes in the total pool between those points. The issue is particularly problematic when combined with flash loans to temporarily inflate an account's share of the pool during reward distribution.",
+      "location": {
+        "file": "src/rewards/RewardManagerMixin.sol",
+        "lines": "142-153"
+      },
+      "recommendation": "Implement a snapshot mechanism for reward distribution that captures the state at specific blocks to prevent manipulation through flash loans. Additionally, add proper validation for reward claims to ensure the rewards claimed are proportional to the time-weighted average of shares held. Consider implementing reward vesting or lock periods to discourage short-term manipulation strategies.",
+      "agents_reporting": [
+        "Reward System Auditor"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "Curve2TokenOracle spot price manipulation through sandwich attack",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Oracle Manipulation",
+      "description": "In Curve2TokenOracle.sol, the price calculation relies on get_dy from the Curve pool to determine spot prices. While there is a check to ensure the spot price doesn't deviate too much from the oracle price, this check can be manipulated. An attacker can perform a sandwich attack by executing trades immediately before and after the oracle price check to temporarily manipulate the spot price within the allowed deviation limits. This manipulation can be particularly effective in pools with lower liquidity or during periods of high volatility. The issue is amplified by the fixed dyAmount used for price sampling, which makes the manipulation cost predictable for attackers.",
+      "location": {
+        "file": "src/oracles/Curve2TokenOracle.sol",
+        "lines": "67-79"
+      },
+      "recommendation": "Implement TWAP (Time-Weighted Average Price) for spot price determination instead of using an instantaneous spot price. Consider using multiple sample points with different dyAmount values to make manipulation more costly and complex. Additionally, tighten the allowed deviation limits for pools with known lower liquidity or implement dynamic limits based on historical volatility.",
+      "agents_reporting": [
+        "Oracle Security Analyst"
+      ]
+    }
+  ],
+  "raw_output": "# Security Audit Report for Notional Finance Leveraged Vault Strategies\n\n## Overview\n\nThis security audit focuses on the Notional Finance Leveraged Vault Strategies codebase, which integrates with Morpho Blue (lending), Curve (AMM/stableswap), and Pendle V2 (yield tokenization). The audit examines the security of cross-protocol interactions, liquidation mechanisms, share calculations, reward distributions, and oracle implementations.\n\n## Critical Findings\n\n### [CRITICAL-1] Permanent lock of funds after Pendle PT expires without whitelisted token withdraw\n\n**Location:** `src/staking/PendlePT.sol:127-145`\n\n**Description:** \n\nIn PendlePT.sol, when a PT token expires, the contract requires redeeming it and then initiating a withdraw request through the withdraw request manager. However, there is no validation that TOKEN_OUT_SY is whitelisted as a valid token in the withdraw request manager before initiating the withdraw. If this validation is missing, when the PT expires, users will be unable to exit their positions properly as the _initiateWithdraw function will fail due to the withdraw request manager rejecting the token. This results in permanently locked user funds with no recovery path, as the PendlePT strategy assumes it can always initialize withdraws with the TOKEN_OUT_SY token through the withdraw request manager.\n\n**Recommendation:** \n\nAdd a validation during contract initialization to verify that TOKEN_OUT_SY is properly whitelisted in the withdraw request manager. Specifically, in the constructor of PendlePT.sol, check that withdrawRequestManager.isApprovedVault(TOKEN_OUT_SY) returns true. Alternatively, provide a recovery mechanism to handle expired PTs when TOKEN_OUT_SY is not whitelisted.\n\n## High Severity Findings\n\n### [HIGH-1] Morpho price manipulation via strategy's oracle function exposes collateral to liquidation\n\n**Location:** `src/AbstractYieldStrategy.sol:122-133`\n\n**Description:**\n\nThe price function in AbstractYieldStrategy.sol is used by Morpho as an oracle without any freshness checks or manipulation resistance. When the price is called with the borrower parameter, it uses t_CurrentAccount to potentially modify price valuation logic in derived contracts. This allows a malicious entity to manipulate the reported price by altering the state during valuation, potentially triggering unfair liquidations. In particular, there's no protection against flash loan attacks that could temporarily manipulate the price of underlying yield tokens. Unlike Chainlink oracles that provide staleness protection, this implementation provides a direct manipulation vector that could be exploited to force liquidations at favorable rates for attackers, especially for less liquid yield tokens.\n\n**Recommendation:**\n\nAdd staleness protection and manipulation resistance to the oracle implementation. Implement a TWAP (Time-Weighted Average Price) mechanism or use Chainlink price feeds as additional validation. Consider implementing circuit breakers that prevent large price movements beyond certain thresholds within short time periods. Additionally, add a timelock or cooldown period between significant price movements to prevent flash loan attacks.\n\n### [HIGH-2] Share calculation rounding errors can be exploited via precision mismatch in tokenized withdrawals\n\n**Location:** `src/withdraws/AbstractWithdrawRequestManager.sol:195-196`\n\n**Description:**\n\nIn AbstractWithdrawRequestManager.sol, the tokenizeWithdrawRequest function calculates the amount of yield tokens to transfer from one account to another when tokenizing a partial withdraw request. The calculation uses integer division which rounds down: yieldTokenAmount = s_withdraw.yieldTokenAmount * sharesAmount / s_withdraw.sharesAmount. An attacker can exploit this by tokenizing small amounts of shares multiple times, causing the recipient to receive less yield tokens than they should due to accumulated rounding errors. Since the value of yield tokens can be significantly larger than the shares, the loss can be substantial. This attack is made worse when there's a large difference in decimal precision between tokens or when the ratio of yield tokens to shares is high.\n\n**Recommendation:**\n\nImplement a more precise calculation method that accounts for rounding errors. Consider using a proportional calculation approach that tracks the total amount transferred to prevent accumulated losses. Another solution would be to implement a minimum tokenization threshold to prevent exploitation through many small transactions. Alternatively, consider adding a dust collection mechanism that ensures any remaining small amounts after the final tokenization are properly assigned.\n\n## Medium Severity Findings\n\n### [MEDIUM-1] Improper validation in reward distribution leads to index inflation attack\n\n**Location:** `src/rewards/RewardManagerMixin.sol:142-153`\n\n**Description:**\n\nIn RewardManagerMixin.sol, the _updateAccountRewards function is used to track and distribute rewards to users based on their share of the pool. However, the implementation fails to properly validate the state before and after reward updates. An attacker can manipulate the reward distribution by entering a position with minimal shares, waiting for rewards to accrue, then exploiting the reward distribution mechanism to claim a disproportionate amount of rewards. This is possible because the reward calculation uses the share ratio at specific points in time without accounting for changes in the total pool between those points. The issue is particularly problematic when combined with flash loans to temporarily inflate an account's share of the pool during reward distribution.\n\n**Recommendation:**\n\nImplement a snapshot mechanism for reward distribution that captures the state at specific blocks to prevent manipulation through flash loans. Additionally, add proper validation for reward claims to ensure the rewards claimed are proportional to the time-weighted average of shares held. Consider implementing reward vesting or lock periods to discourage short-term manipulation strategies.\n\n### [MEDIUM-2] Curve2TokenOracle spot price manipulation through sandwich attack\n\n**Location:** `src/oracles/Curve2TokenOracle.sol:67-79`\n\n**Description:**\n\nIn Curve2TokenOracle.sol, the price calculation relies on get_dy from the Curve pool to determine spot prices. While there is a check to ensure the spot price doesn't deviate too much from the oracle price, this check can be manipulated. An attacker can perform a sandwich attack by executing trades immediately before and after the oracle price check to temporarily manipulate the spot price within the allowed deviation limits. This manipulation can be particularly effective in pools with lower liquidity or during periods of high volatility. The issue is amplified by the fixed dyAmount used for price sampling, which makes the manipulation cost predictable for attackers.\n\n**Recommendation:**\n\nImplement TWAP (Time-Weighted Average Price) for spot price determination instead of using an instantaneous spot price. Consider using multiple sample points with different dyAmount values to make manipulation more costly and complex. Additionally, tighten the allowed deviation limits for pools with known lower liquidity or implement dynamic limits based on historical volatility."
+}

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Shared utilities for AI runner scripts
+# Invokes AI coding harnesses (claude-code, opencode, codex) directly — no orchestrator needed.
 
 set -euo pipefail
 
@@ -28,46 +29,87 @@ resolve_target() {
   echo "$target_dir"
 }
 
-# Resolve report output path
+# Resolve report output path (supports run numbering)
 resolve_report_path() {
   local target_name="$1"
   local runner_id="$2"
+  local run_id="${3:-}"
+
   local report_dir="${BENCHMARK_ROOT}/reports/${target_name}"
+  if [[ -n "$run_id" ]]; then
+    report_dir="${report_dir}/${run_id}"
+  fi
   mkdir -p "$report_dir"
   echo "${report_dir}/${runner_id}.json"
 }
 
-# Check if hermes is installed
-require_hermes() {
-  if ! command -v hermes &>/dev/null; then
-    log_error "Hermes is not installed. Install with:"
-    log_error "  curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"
+# Check that a harness CLI is available
+require_harness() {
+  local harness="$1"
+  local cmd=""
+  case "$harness" in
+    claude-code) cmd="claude" ;;
+    opencode)    cmd="opencode" ;;
+    codex)       cmd="codex" ;;
+    *)
+      log_error "Unknown harness: ${harness}"
+      exit 1
+      ;;
+  esac
+
+  if ! command -v "$cmd" &>/dev/null; then
+    log_error "${harness} (${cmd}) is not installed."
     exit 1
   fi
 }
 
-# Build the pashov skills audit prompt for any AI coding tool
+# Build the full audit prompt from the target's AUDIT_PROMPT.md
 build_audit_prompt() {
-  local target_dir="$1"
-  local report_path="$2"
-  local harness="$3"
-  local model="$4"
+  local target_name="$1"
+  local target_dir="$2"
+  local report_path="$3"
+  local harness="$4"
+  local model="$5"
+
+  local prompt_file="${BENCHMARK_ROOT}/targets/${target_name}/AUDIT_PROMPT.md"
+  local integrations_file="${BENCHMARK_ROOT}/targets/${target_name}/integrations-context/INTEGRATIONS_CONTEXT.md"
+
+  # Read the audit prompt
+  local audit_scope=""
+  if [[ -f "$prompt_file" ]]; then
+    audit_scope="$(cat "$prompt_file")"
+  else
+    log_warn "No AUDIT_PROMPT.md found for ${target_name}, using generic scope"
+    audit_scope="Audit all .sol files under src/ (exclude tests/, interfaces/, lib/, mocks/)."
+  fi
+
+  # Determine skill invocation syntax per harness
+  local skill_prefix="/"
+  case "$harness" in
+    codex) skill_prefix="\$" ;;
+  esac
 
   cat <<PROMPT
 You are running a security audit benchmark. Follow these steps exactly:
 
-1. Install the pashov/skills solidity-auditor skill if not already installed.
-2. Navigate to the target directory: ${target_dir}
-3. Run the solidity-auditor skill against all .sol files in src/ (exclude tests/, interfaces/, lib/, mocks/).
-4. Collect ALL findings from the audit.
-5. Format the results as a JSON object matching this exact schema and write it to: ${report_path}
+1. Navigate to the target directory: ${target_dir}
+2. Read the integrations context file at: ${integrations_file}
+3. Run ${skill_prefix}solidity-auditor against the codebase with the scope and focus described below.
+4. Collect ALL findings (Critical, High, Medium severity — skip Low/Informational unless they enable a higher-severity exploit chain).
+5. Format the results as a JSON object matching the schema below and write it to: ${report_path}
 
-The JSON must have this structure:
+## Audit Scope & Focus
+
+${audit_scope}
+
+## Output JSON Schema
+
+Write a single JSON file to ${report_path} with this exact structure:
 {
   "metadata": {
     "model": "${model}",
     "harness": "${harness}",
-    "target": "$(basename "$(dirname "$target_dir")")",
+    "target": "${target_name}",
     "timestamp": "<ISO 8601 timestamp>",
     "duration_seconds": <elapsed seconds>,
     "skill_version": "v2"
@@ -87,9 +129,9 @@ The JSON must have this structure:
       "severity": "<critical|high|medium|low|informational>",
       "confidence": "<high|medium|low>",
       "category": "<vulnerability category>",
-      "description": "<detailed description>",
+      "description": "<detailed description with root cause and impact>",
       "location": { "file": "<relative path>", "lines": "<line range>" },
-      "recommendation": "<fix recommendation>",
+      "recommendation": "<specific fix recommendation>",
       "agents_reporting": ["<agent names that found this>"]
     }
   ],
@@ -99,45 +141,138 @@ The JSON must have this structure:
 IMPORTANT:
 - Record start time before the audit and calculate duration_seconds.
 - Each finding must have a unique sequential ID (F-001, F-002, ...).
-- Classify severity accurately: critical (fund loss), high (significant risk), medium (moderate risk), low (minor), informational (best practice).
+- Severity: critical = direct fund loss, high = significant exploitable risk, medium = moderate risk under specific conditions.
 - Save the JSON file to exactly: ${report_path}
-- Do NOT ask for confirmation, run autonomously.
+- Do NOT ask for confirmation — run fully autonomously.
 PROMPT
 }
 
-# Run a benchmark using hermes as the orchestrator
+# ─── Harness-specific invocation ─────────────────────────────────────────────
+
+run_claude_code() {
+  local model_id="$1"
+  local prompt="$2"
+  local log_file="$3"
+  local target_dir="$4"
+
+  cd "$target_dir"
+  claude \
+    --model "$model_id" \
+    -p \
+    --dangerously-skip-permissions \
+    --output-format text \
+    "$prompt" \
+    2>&1 | tee "$log_file"
+}
+
+run_opencode() {
+  local model_id="$1"
+  local prompt="$2"
+  local log_file="$3"
+  local target_dir="$4"
+
+  (
+    set -euo pipefail
+
+    # opencode v0.0.55 does not support a --model flag. Use an isolated HOME
+    # per run with a generated config so model selection is deterministic and
+    # parallel runs do not race on ~/.opencode/config.yaml.
+    local real_home="${HOME:-}"
+    local tmp_home
+    tmp_home="$(mktemp -d)"
+    trap 'rm -rf "$tmp_home"' EXIT
+
+    mkdir -p "$tmp_home/.opencode"
+
+    # Keep user commands/skills if present so slash-commands still work.
+    if [[ -n "$real_home" && -d "$real_home/.opencode/commands" ]]; then
+      mkdir -p "$tmp_home/.opencode/commands"
+      cp -a "$real_home/.opencode/commands/." "$tmp_home/.opencode/commands/"
+    fi
+
+    cat > "$tmp_home/.opencode/config.yaml" <<EOF
+providers:
+  openrouter:
+    api_base: "https://openrouter.ai/api/v1"
+    api_key_env: "OPENROUTER_API_KEY"
+    models:
+      - id: "${model_id}"
+        name: "${model_id}"
+
+agents:
+  title:
+    provider: "openrouter"
+    model: "${model_id}"
+  coder:
+    provider: "openrouter"
+    model: "${model_id}"
+  task:
+    provider: "openrouter"
+    model: "${model_id}"
+EOF
+
+    cd "$target_dir"
+    HOME="$tmp_home" opencode \
+      -q \
+      -p "$prompt" \
+      2>&1 | tee "$log_file"
+  )
+}
+
+run_codex() {
+  local model_id="$1"
+  local prompt="$2"
+  local log_file="$3"
+  local target_dir="$4"
+
+  cd "$target_dir"
+  codex exec \
+    --model "$model_id" \
+    --full-auto \
+    "$prompt" \
+    2>&1 | tee "$log_file"
+}
+
+# ─── Main benchmark runner ───────────────────────────────────────────────────
+
 run_benchmark() {
   local target_name="$1"
   local runner_id="$2"
   local harness="$3"
   local model="$4"
-  local harness_cmd="$5"
+  local model_id="$5"         # CLI-specific model identifier
+  local run_id="${6:-}"        # optional run ID (e.g., "run-1")
 
-  require_hermes
+  require_harness "$harness"
 
   local target_dir
   target_dir="$(resolve_target "$target_name")"
 
   local report_path
-  report_path="$(resolve_report_path "$target_name" "$runner_id")"
+  report_path="$(resolve_report_path "$target_name" "$runner_id" "$run_id")"
 
   local audit_prompt
-  audit_prompt="$(build_audit_prompt "$target_dir" "$report_path" "$harness" "$model")"
+  audit_prompt="$(build_audit_prompt "$target_name" "$target_dir" "$report_path" "$harness" "$model")"
+
+  local log_file="${report_path%.json}.log"
 
   log_info "Starting benchmark: ${runner_id}"
   log_info "  Target:  ${target_name} (${target_dir})"
   log_info "  Harness: ${harness}"
   log_info "  Model:   ${model}"
   log_info "  Report:  ${report_path}"
+  [[ -n "$run_id" ]] && log_info "  Run:     ${run_id}"
 
   local start_time
   start_time=$(date +%s)
 
-  # Build hermes command
-  local hermes_prompt="Run pashov skills solidity-auditor using ${harness_cmd} against directory ${target_dir} and save the structured JSON report to ${report_path}. ${audit_prompt}"
-
-  log_info "Invoking Hermes..."
-  hermes chat -q "$hermes_prompt" 2>&1 | tee "${report_path%.json}.log"
+  # Dispatch to harness
+  log_info "Invoking ${harness}..."
+  case "$harness" in
+    claude-code) run_claude_code "$model_id" "$audit_prompt" "$log_file" "$target_dir" ;;
+    opencode)    run_opencode    "$model_id" "$audit_prompt" "$log_file" "$target_dir" ;;
+    codex)       run_codex       "$model_id" "$audit_prompt" "$log_file" "$target_dir" ;;
+  esac
 
   local end_time
   end_time=$(date +%s)
@@ -175,7 +310,7 @@ run_benchmark() {
     "informational": 0
   },
   "findings": [],
-  "raw_output": "ERROR: Benchmark run failed. Check ${report_path%.json}.log for details."
+  "raw_output": "ERROR: Benchmark run failed. Check ${log_file} for details."
 }
 EOF
     exit 1

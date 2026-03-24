@@ -1,0 +1,2 @@
+2026/03/24 14:29:59 WARN FZF not found in $PATH. Some features might be limited or slower.
+Completed the security audit of Notional Finance Leveraged Vault Strategies codebase. I've identified 12 significant issues (4 critical, 6 high, 2 medium severity) and written the findings to the requested JSON file.

@@ -10,6 +10,7 @@ function loadReportsPlugin() {
 
   function loadReports() {
     const reportsDir = resolve(__dirname, "../reports");
+    const runId = process.env.REPORT_ID || "run-1";
     const targets: Record<string, any[]> = {};
 
     try {
@@ -19,18 +20,25 @@ function loadReportsPlugin() {
         if (!targetDir.isDirectory()) continue;
         const targetPath = resolve(reportsDir, targetDir.name);
         const reports: any[] = [];
+        const runPath = resolve(targetPath, runId);
 
-        for (const file of readdirSync(targetPath)) {
-          if (!file.endsWith(".json")) continue;
-          try {
-            const content = readFileSync(
-              resolve(targetPath, file),
-              "utf-8"
-            );
-            reports.push(JSON.parse(content));
-          } catch {
-            // skip invalid JSON
+        try {
+          for (const file of readdirSync(runPath)) {
+            if (!file.endsWith(".json")) continue;
+            try {
+              const content = readFileSync(
+                resolve(runPath, file),
+                "utf-8"
+              );
+              const parsed = JSON.parse(content);
+              parsed._run = runId;
+              reports.push(parsed);
+            } catch {
+              // skip invalid JSON
+            }
           }
+        } catch {
+          // run directory doesn't exist for this target
         }
 
         if (reports.length > 0) {
@@ -78,6 +86,6 @@ export default defineConfig({
     outDir: "dist",
   },
   server: {
-    allowedHosts: ["states-gate-trans-able.trycloudflare.com"],
+    allowedHosts: ["states-gate-trans-able.trycloudflare.com", "circuits-focal-numeric-promptly.trycloudflare.com"],
   },
 });

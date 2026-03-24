@@ -1,0 +1,133 @@
+{
+  "metadata": {
+    "model": "x-ai/grok-4.20-beta",
+    "harness": "opencode",
+    "target": "notional-finance",
+    "timestamp": "2026-03-24T20:15:00Z",
+    "duration_seconds": 287,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 7,
+    "critical": 2,
+    "high": 3,
+    "medium": 2,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Reentrancy Vulnerabilities in AbstractYieldStrategy _mintYieldTokens and _burnShares",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Reentrancy",
+      "description": "The AbstractYieldStrategy contains two critical virtual functions: _mintYieldTokens and _burnShares that are called during key token operations but lack reentrancy protection. While the external-facing functions in AbstractYieldStrategy use the nonReentrant modifier, the internal virtual functions themselves do not carry this protection to implementation contracts. Since these functions are meant to be overridden by child contracts, they may interact with external protocols like Curve, Pendle or Morpho that have callbacks. If an inheriting contract performs external calls in these functions without proper reentrancy guards, an attacker could potentially reenter the protocol and manipulate balances or state before the original operation completes. This is particularly concerning since these functions handle token minting, burning, and asset transfers - creating a direct path to fund theft.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "402-413, 415-437"
+      },
+      "recommendation": "Add nonReentrant modifiers to both the _mintYieldTokens and _burnShares virtual functions, or create an internal reentrancy guard that all implementations must call at the beginning of these functions. Additionally, ensure any external calls follow the checks-effects-interactions pattern.",
+      "agents_reporting": [
+        "Security Auditor"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "Oracle Manipulation Risk in AbstractYieldStrategy.convertYieldTokenToAsset",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Oracle Manipulation",
+      "description": "The AbstractYieldStrategy.convertYieldTokenToAsset function (lines 141-146) directly fetches the exchange rate from the TRADING_MODULE oracle without any staleness checks, confidence thresholds, or manipulation resistance. The function accepts the returned price as-is, casting from int256 to uint256 without validation. This rate is then used for critical valuation calculations, including position health checks and collateral requirements. According to the Morpho integration context, Morpho 'trusts the oracle unconditionally' and requires integrating protocols to validate freshness. Without proper validation, a manipulated price feed (either through oracle attacks or price manipulation in low-liquidity pools) could lead to incorrect valuation of yield tokens. An attacker could temporarily manipulate the price to either extract excess value during liquidations or prevent legitimate liquidations.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "141-146"
+      },
+      "recommendation": "Implement oracle safeguards including: (1) Timestamp validation to check for stale prices, (2) Multiple oracle sources with deviation thresholds, (3) Time-weighted average prices (TWAP) for manipulation resistance, and (4) Proper validation of returned values before using them in calculations.",
+      "agents_reporting": [
+        "Security Auditor"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "Vulnerable Delegatecall Pattern in AbstractSingleSidedLP",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Arbitrary Code Execution",
+      "description": "The AbstractSingleSidedLP contract uses a dangerous delegatecall pattern where it delegates to an external LP_LIB for core functionality (joining pools, staking, unstaking, etc.). This implementation creates a significant security risk if LP_LIB is compromised or maliciously upgraded. Since delegatecall executes code in the context of the calling contract, a compromised LP_LIB implementation would have complete access to the AbstractSingleSidedLP's storage and funds. Multiple functions in the contract, including _joinPoolAndStake, _unstakeAndExitPool, and _withdrawPendingRequests all use this delegatecall pattern. Additionally, there are no access controls on the LP_LIB address itself, making it a critical point of failure. If an attacker gained control of the LP_LIB implementation, they could potentially drain all funds from the strategy.",
+      "location": {
+        "file": "src/single-sided-lp/AbstractSingleSidedLP.sol",
+        "lines": "67-68, 75-78, 293-296"
+      },
+      "recommendation": "Replace the delegatecall pattern with a more secure design. Either (1) Implement the LP functionality directly within the contract rather than delegating, (2) Use a standard call rather than delegatecall, which limits the security impact, or (3) Implement strict access controls and upgradeability protections for the LP_LIB address including timelocks and multi-signature requirements.",
+      "agents_reporting": [
+        "Security Auditor"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "Precision Loss in Withdraw Request Share Calculation",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Precision Loss",
+      "description": "In AbstractWithdrawRequestManager.tokenizeWithdrawRequest, when calculating the proportional amount of yield tokens to transfer between accounts during partial withdrawals (lines 194-196), the code performs division before multiplication: yieldTokenAmount = s_withdraw.yieldTokenAmount * sharesAmount / s_withdraw.sharesAmount. This order of operations can lead to significant precision loss, especially when dealing with small share amounts or large ratios. This calculation directly affects user funds during withdrawals and liquidations. If sharesAmount is small compared to s_withdraw.sharesAmount, the division might round down to zero, causing users to lose their entitled yield tokens. The issue is amplified in scenarios with multiple liquidations or partial withdrawals where these small precision losses can accumulate over time.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "194-199"
+      },
+      "recommendation": "Modify the calculation to perform multiplication before division to minimize precision loss. Additionally, consider using a library like PRBMath for higher precision fixed-point arithmetic, especially for critical financial calculations involving user funds.",
+      "agents_reporting": [
+        "Security Auditor"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "Missing Slippage Protection in Trade Execution",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Frontrunning Risk",
+      "description": "Multiple functions in AbstractSingleSidedLP execute trades without proper slippage protection, particularly in _executeRedemptionTrades (lines 223-250). While the trade parameters include a minPurchaseAmount parameter, there is no validation that this parameter offers meaningful protection. For example, users could set this to 0 or an extremely low value. This creates a frontrunning vulnerability where MEV bots or malicious actors can sandwich these trades, causing significant loss of funds during token swaps. The impact is especially severe because these trades handle user funds during entry and exit from positions, potentially affecting all users of the protocol. During high volatility periods or with low-liquidity tokens, the loss from sandwich attacks could be substantial.",
+      "location": {
+        "file": "src/single-sided-lp/AbstractSingleSidedLP.sol",
+        "lines": "223-250"
+      },
+      "recommendation": "Implement mandatory minimum slippage protection by: (1) Calculating a reasonable minimum output based on current market conditions, (2) Requiring that minPurchaseAmount parameters provide adequate protection (e.g., at least 99% of expected value), (3) Using price oracles to validate trade fairness, and (4) Implementing circuit breakers for extremely unfavorable trades.",
+      "agents_reporting": [
+        "Security Auditor"
+      ]
+    },
+    {
+      "id": "F-006",
+      "title": "Silent Failures in Reward Token Transfers",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Error Handling",
+      "description": "In AbstractRewardManager._claimRewardToken (lines 241-252), the contract implements a try-catch block around token transfers that silently handles failures without appropriate error propagation. If a reward token transfer fails due to issues like a blacklisted address, low balance, or a malfunction in the reward token contract, the function simply emits a zero-value transfer event and continues execution. This approach has two significant problems: (1) Users have no visibility into why their rewards weren't received beyond a zero-value event, and (2) Errors that should potentially halt execution (like suspected exploits or critical reward token issues) are suppressed. This could lead to a scenario where users believe they are accumulating rewards, but transfers are consistently failing without clear indication.",
+      "location": {
+        "file": "src/rewards/AbstractRewardManager.sol",
+        "lines": "241-252"
+      },
+      "recommendation": "Improve error handling by: (1) Adding detailed error events that capture the reason for transfer failures, (2) Implementing a failure tracking mechanism that alerts administrators of consistent transfer issues, (3) Allowing users to see pending rewards versus successfully claimed rewards, and (4) Considering whether certain critical errors should halt execution rather than being suppressed.",
+      "agents_reporting": [
+        "Security Auditor"
+      ]
+    },
+    {
+      "id": "F-007",
+      "title": "Improper Validation in TimelockUpgradeableProxy.executeUpgrade",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Access Control",
+      "description": "The TimelockUpgradeableProxy.executeUpgrade function (lines 54-59) only checks if the current time is greater than or equal to upgradeValidAt without an upper bound check. This allows for a \"upgrade timebomb\" attack where a malicious or compromised upgrade admin could schedule an upgrade for a very distant future date (e.g., years ahead). Once scheduled, this pending upgrade cannot be canceled by any future governance action except by setting newImplementation to address(0). If the upgrade admin key is later rotated or governance changes, the protocol would still be vulnerable to this pre-scheduled upgrade. When the future date arrives, the upgrade would automatically become valid and could be executed immediately, potentially bypassing active governance processes at that future time. This is particularly dangerous because upgrades can completely change the contract's behavior and access all assets.",
+      "location": {
+        "file": "src/proxy/TimelockUpgradeableProxy.sol",
+        "lines": "54-59"
+      },
+      "recommendation": "Modify the executeUpgrade function to include a maximum validity window by adding a condition like require(block.timestamp <= upgradeValidAt + MAX_UPGRADE_WINDOW) where MAX_UPGRADE_WINDOW is a reasonable timeframe (e.g., 30 days). Additionally, implement a cancelUpgrade function that can be called by governance to invalidate any pending upgrades, regardless of who initiated them.",
+      "agents_reporting": [
+        "Security Auditor"
+      ]
+    }
+  ],
+  "raw_output": "Security audit of Notional Finance Leveraged Vault Strategies revealed several critical and high severity issues that could lead to loss of user funds. The most concerning findings include reentrancy vulnerabilities in key yield strategy functions, a dangerous delegatecall pattern in the LP implementation, oracle manipulation risks, and precision loss in withdraw calculations. Additional concerns include missing slippage protection, silent failures in reward transfers, and timelocking vulnerabilities. These issues affect core functionality including token minting/burning, trading, liquidations, and upgrades - creating multiple potential attack vectors."
+}

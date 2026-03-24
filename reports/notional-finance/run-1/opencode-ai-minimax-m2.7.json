@@ -1,0 +1,213 @@
+{
+  "metadata": {
+    "model": "minimax/minimax-m2.7",
+    "harness": "opencode",
+    "target": "notional-finance",
+    "timestamp": "2026-03-24T14:38:55+00:00",
+    "duration_seconds": 616,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 12,
+    "critical": 4,
+    "high": 6,
+    "medium": 2,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Reentrancy in CurveConvexLib._exitPool when using V2 pools",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Reentrancy",
+      "description": "The implementation of _exitPool for Curve V2 pools in CurveConvex2Token.sol calculates token balances before and after pool exit but doesn't use reentrancy protection. If a malicious token implementation is used in a pool, it could reenter during the remove_liquidity call and manipulate balances, leading to theft of funds. The contract calculates balances before and after the external call, making it vulnerable to classic reentrancy attacks where token balances could be manipulated during the callback.",
+      "location": {
+        "file": "src/single-sided-lp/CurveConvex2Token.sol",
+        "lines": "276-287"
+      },
+      "recommendation": "Add reentrancy protection using a nonReentrant modifier and follow the checks-effects-interactions pattern. Consider using cached values for token balance differences instead of relying on pre/post balance checks, or ensure that the tokens used cannot have reentrancy capabilities.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "Missing slippage protection in PendlePT_sUSDe._executeInstantRedemption",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Price Manipulation",
+      "description": "The first trade from sUSDe to sDAI in the _executeInstantRedemption function has no slippage protection (limit: 0). An attacker can manipulate the Curve pool to cause significant slippage, stealing user funds. This allows frontrunning of user redemptions, causing significant value loss. Since the pool exit uses a limit of 0, any output amount would satisfy the condition, leaving users vulnerable to manipulation of the exchange rate.",
+      "location": {
+        "file": "src/staking/PendlePT_sUSDe.sol",
+        "lines": "34-45"
+      },
+      "recommendation": "Add proper slippage protection for the first leg of the trade to prevent manipulation. This should include calculating an acceptable minimum amount of sDAI to receive based on current exchange rates and adding a buffer for normal price movements.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "Oracle manipulation risk in AbstractLPOracle",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "Oracle Manipulation",
+      "description": "The oracle price validation checks in AbstractLPOracle only compare spot prices to oracle prices. During periods of high volatility or low liquidity, the spot price can be manipulated with flash loans to pass validation checks. This enables attackers to manipulate the spot prices to extract value from the protocol by artificially increasing or decreasing asset prices, which could be exploited during withdrawals or deposits.",
+      "location": {
+        "file": "src/oracles/AbstractLPOracle.sol",
+        "lines": "89-97"
+      },
+      "recommendation": "Implement time-weighted average pricing (TWAP) for spot price checks rather than relying on current spot prices. Consider increasing deviation thresholds during periods of high volatility and implementing circuit breakers for extreme price movements.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "Sequencer downtime race condition in AbstractCustomOracle",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Oracle Manipulation",
+      "description": "The sequencer uptime oracle check has a critical flaw. It requires answer == 0 to indicate the sequencer is down, but this actually means the sequencer is up according to Chainlink's documentation. Additionally, it requires time since startedAt to be greater than grace period, but this logic is inverted. This will result in price feeds operating during sequencer downtime, potentially allowing transactions when the sequencer restarts, leading to outdated prices and manipulation opportunities.",
+      "location": {
+        "file": "src/oracles/AbstractCustomOracle.sol",
+        "lines": "36-49"
+      },
+      "recommendation": "Fix the logic to properly check sequencer status, using answer == 1 to indicate sequencer is down according to Chainlink's specification. Ensure the grace period check correctly verifies sufficient time has passed since restart by comparing (block.timestamp - startedAt) to the grace period.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "Reentrancy in Morpho Callbacks without protection",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Reentrancy",
+      "description": "The MorphoLendingRouter implements IMorphoCallbacks but lacks reentrancy protection in callback functions like onMorphoSupply and onMorphoWithdraw. State changes occur before control is returned to Morpho, creating a reentrancy vector. An attacker could reenter through these callbacks, potentially double-spending or manipulating account balances by calling back into the router or other contracts while the callback is executing.",
+      "location": {
+        "file": "src/routers/MorphoLendingRouter.sol",
+        "lines": "100-135"
+      },
+      "recommendation": "Implement reentrancy guards on all callback functions and follow the checks-effects-interactions pattern. Ensure all state changes are completed before making external calls, and add nonReentrant modifiers to each callback function.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    },
+    {
+      "id": "F-006",
+      "title": "Timelock bypass vulnerability in TimelockUpgradeableProxy",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Access Control",
+      "description": "The executeUpgrade function in TimelockUpgradeableProxy insufficiently validates that upgrades have completed their timelock period. While it checks that the required time has passed, it doesn't properly verify that an upgrade was actually scheduled through the correct flow. A malicious admin could potentially bypass the timelock by directly manipulating contract state, allowing for immediate malicious upgrades without the intended security delay.",
+      "location": {
+        "file": "src/proxy/TimelockUpgradeableProxy.sol",
+        "lines": "40-50"
+      },
+      "recommendation": "Add comprehensive validation that the upgrade was properly scheduled through the intended flow. Implement multi-signature admin controls to prevent a single admin from executing upgrades, and add event emissions for all upgrade-related actions for better transparency and monitoring.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    },
+    {
+      "id": "F-007",
+      "title": "Price manipulation vulnerability in Curve2TokenOracle",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Oracle Manipulation",
+      "description": "The Curve2TokenOracle relies on spot prices from Curve pools without manipulation protection. The lpPrice function uses current pool state without time-weighted average price (TWAP) or other manipulation checks, making it vulnerable to flash loan attacks. An attacker could manipulate the Curve pool temporarily using flash loans, causing incorrect valuations and potential asset theft through mispriced assets when withdrawing or depositing.",
+      "location": {
+        "file": "src/oracles/Curve2TokenOracle.sol",
+        "lines": "30-50"
+      },
+      "recommendation": "Implement time-weighted average pricing (TWAP) for Curve pool prices, add circuit breakers for unusual price movements, and verify price data freshness. Consider implementing deviation bounds from external price sources as a sanity check.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    },
+    {
+      "id": "F-008",
+      "title": "Expired PT Token Handling Vulnerability in PendlePT",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Integration Error",
+      "description": "The PendlePT contract does not properly validate PT token expiry before position entry. According to the Pendle integration context, PT/YT expire and post-expiry markets stop functioning. However, the contract allows users to enter positions with expired tokens, which would result in immediate capital loss as the expired tokens cannot be properly redeemed through the intended mechanisms, leading to permanently locked funds.",
+      "location": {
+        "file": "src/staking/PendlePT.sol",
+        "lines": "36-45"
+      },
+      "recommendation": "Add explicit expiry checks before entering positions with PT tokens. Implement a validation function that verifies the expiry timestamp against the current block timestamp, and revert if the token is expired or too close to expiration to be safely used.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    },
+    {
+      "id": "F-009",
+      "title": "Disabled Slippage Protection in Curve Pool Deposits",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Price Manipulation",
+      "description": "In CurveConvex2Token, the _enterPool function sets minAmount = -1, which effectively disables slippage protection when interacting with Curve pools. This allows sandwich attacks on Curve pool deposits where attackers can manipulate the pool before and after the deposit transaction, extracting significant value from users. This is particularly dangerous when large deposits are made, as they would experience higher slippage without any protection.",
+      "location": {
+        "file": "src/single-sided-lp/CurveConvex2Token.sol",
+        "lines": "141"
+      },
+      "recommendation": "Implement proper slippage protection by calculating an appropriate minimum output amount based on expected returns. Accept a slippage parameter from the caller and use it to determine the minimum acceptable output for the operation.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    },
+    {
+      "id": "F-010",
+      "title": "Lack of Slippage Protection in AbstractYieldStrategy",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "Price Manipulation",
+      "description": "The _depositToPrimaryAsset function in AbstractYieldStrategy lacks slippage protection parameters when trading tokens. This allows attackers to sandwich the trade execution, causing significant value extraction. Users depositing funds could experience much higher slippage than expected, resulting in direct financial loss during deposit operations. Since the protocol interacts with AMMs like Curve, this vulnerability is particularly exploitable on trades with meaningful size.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "117-124"
+      },
+      "recommendation": "Add a minimum output amount parameter to deposit functions and validate that trade results meet these minimum expectations. Implement a slippage parameter that can be set by users or governance to control maximum acceptable slippage.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    },
+    {
+      "id": "F-011",
+      "title": "Unprotected Redemption in PendlePTLib",
+      "severity": "high",
+      "confidence": "medium",
+      "category": "Price Manipulation",
+      "description": "The PendlePTLib functions for redeeming PT tokens lack slippage protection. When redeeming PT tokens, especially in the redeemPyToToken and redeemSyToToken functions, there is no minimum output amount specified, allowing market conditions to be manipulated before redemption. This could lead to significant value extraction during redemption as attackers could sandwich user transactions.",
+      "location": {
+        "file": "src/staking/PendlePTLib.sol",
+        "lines": "62-77"
+      },
+      "recommendation": "Implement minimum output amount parameters for all redemption functions. Accept a minimum expected output parameter from the caller and verify that the actual output meets this minimum threshold.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    },
+    {
+      "id": "F-012",
+      "title": "Tokenized withdraw requests can be manipulated in liquidations",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Vulnerability",
+      "description": "The tokenizeWithdrawRequest function used during liquidations in AbstractWithdrawRequestManager doesn't properly validate input parameters. A malicious liquidator could manipulate the tokenization process to extract more value than entitled. This vulnerability could allow borrowers to lose more collateral than necessary during liquidations, as the liquidation process doesn't properly enforce proportional claim transfers.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "162-204"
+      },
+      "recommendation": "Add proper validation for liquidator inputs and ensure tokenization properly transfers proportional withdraw requests. Implement checks to verify that the tokenized amount accurately represents the liquidator's entitled portion of the collateral.",
+      "agents_reporting": [
+        "security-auditor"
+      ]
+    }
+  ],
+  "raw_output": "# Security Audit Report: Notional Finance Leveraged Vault Strategies\n\n## Overview\n\nThis security audit examines the Notional Finance Leveraged Vault Strategies codebase, focusing on critical vulnerabilities that could lead to loss of funds, denial of service, or other security issues. The audit specifically targets the integration with Morpho Blue, Curve, and Pendle protocols.\n\n## Critical Findings\n\n### F-001: Reentrancy in CurveConvexLib._exitPool when using V2 pools\nThe implementation calculates token balances before and after pool exit without reentrancy protection. Malicious token implementations could reenter during remove_liquidity calls and manipulate balances.\n\n### F-005: Reentrancy in Morpho Callbacks without protection\nMorphoLendingRouter implements callbacks without reentrancy guards, allowing potential double-spending through callback manipulation.\n\n### F-006: Timelock bypass vulnerability in TimelockUpgradeableProxy\nThe executeUpgrade function doesn't properly validate that upgrades were scheduled through the correct flow, potentially allowing immediate malicious upgrades.\n\n### F-008: Expired PT Token Handling Vulnerability in PendlePT\nThe contract allows users to enter positions with expired Pendle tokens, which would result in immediate capital loss as expired tokens cannot be properly redeemed.\n\n## High Severity Findings\n\n### F-002: Missing slippage protection in PendlePT_sUSDe._executeInstantRedemption\nThe first trade from sUSDe to sDAI has no slippage protection, allowing attackers to manipulate pools and cause significant slippage.\n\n### F-003: Oracle manipulation risk in AbstractLPOracle\nValidation only compares spot prices to oracle prices, allowing flash loan manipulation during high volatility or low liquidity.\n\n### F-004: Sequencer downtime race condition in AbstractCustomOracle\nThe sequencer uptime check has logic flaws that would allow price feeds to operate during sequencer downtime.\n\n### F-007: Price manipulation vulnerability in Curve2TokenOracle\nRelies on spot prices from Curve pools without manipulation protection like TWAP or circuit breakers.\n\n### F-009: Disabled Slippage Protection in Curve Pool Deposits\nThe _enterPool function sets minAmount = -1, effectively disabling slippage protection when interacting with Curve pools.\n\n### F-010: Lack of Slippage Protection in AbstractYieldStrategy\nThe _depositToPrimaryAsset function lacks slippage protection parameters when trading tokens.\n\n### F-011: Unprotected Redemption in PendlePTLib\nFunctions for redeeming PT tokens lack slippage protection, allowing market conditions to be manipulated before redemption.\n\n## Medium Severity Findings\n\n### F-012: Tokenized withdraw requests can be manipulated in liquidations\nThe tokenizeWithdrawRequest function doesn't properly validate input parameters, allowing manipulation during liquidations.\n\n## Recommendations\n\n1. Add reentrancy protection to all external interactions, especially with Morpho and Curve\n2. Implement proper slippage protection for all token exchanges and pool interactions\n3. Use TWAP oracles instead of spot price checks for all price-sensitive operations\n4. Add proper validation for PT token expiration before entering positions\n5. Fix the sequencer uptime check logic to correctly handle L2 sequencer status\n6. Strengthen validation in the upgrade mechanism to prevent timelock bypasses\n7. Add thorough input validation for all liquidation and withdraw functions"
+}

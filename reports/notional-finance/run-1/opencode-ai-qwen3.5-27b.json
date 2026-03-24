@@ -1,0 +1,150 @@
+{
+  "metadata": {
+    "model": "qwen/qwen3.5-27b",
+    "harness": "opencode",
+    "target": "notional-finance",
+    "timestamp": "2026-03-24T14:34:46Z",
+    "duration_seconds": 326,
+    "skill_version": "v2"
+  },
+  "summary": {
+    "total_findings": 8,
+    "critical": 1,
+    "high": 3,
+    "medium": 4,
+    "low": 0,
+    "informational": 0
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Incorrect sequencer uptime checks in AbstractCustomOracle",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Oracle Manipulation",
+      "description": "The `_checkSequencer` function in AbstractCustomOracle has a logical flaw that inverts the intended behavior. When checking if a sequencer is down, it requires `answer == 0`, which typically means the sequencer is up and running. Additionally, it checks if the grace period has elapsed using `SEQUENCER_UPTIME_GRACE_PERIOD < block.timestamp - startedAt`, which would only be relevant if the sequencer was previously down and has just come back online. This creates a situation where the oracle will only work when the sequencer is down and has been down longer than the grace period - the exact opposite of intended behavior. In practice, this means price feeds will revert during normal operations but allow potentially stale/manipulated prices during sequencer downtime.",
+      "location": {
+        "file": "src/oracles/AbstractCustomOracle.sol",
+        "lines": "36-48"
+      },
+      "recommendation": "Correct the sequencer check logic to `require(answer == 0, \"Sequencer Down\")` and adjust the grace period check to `require(block.timestamp - startedAt > SEQUENCER_UPTIME_GRACE_PERIOD, \"Grace Period\")`. This ensures the oracle only accepts prices when the sequencer is operational and has been operational for longer than the grace period after recovering from downtime.",
+      "agents_reporting": [
+        "oracle-analysis-agent"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "Delegatecall to TradingModule without reentrancy protection in AbstractYieldStrategy",
+      "severity": "critical",
+      "confidence": "high",
+      "category": "Reentrancy",
+      "description": "The `_executeTrade` function in AbstractYieldStrategy uses delegatecall to invoke the TradingModule's implementation without any reentrancy protection. While the function itself is internal, it's called from critical functions like _mintYieldTokens, _redeemShares, and others. The delegatecall pattern forwards the entire context of the calling contract, giving the called contract full access to the caller's state. If the TradingModule's implementation contains (or is upgraded to contain) malicious code or vulnerabilities, it could manipulate the vault's state, steal funds, or perform other unauthorized operations. Since the contract is designed to be upgradeable, a compromised TradingModule could affect all vaults using it. Furthermore, the TRADING_MODULE is stored as a global constant and not set per implementation, meaning all strategies share the same vulnerable implementation.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "359-375"
+      },
+      "recommendation": "Add reentrancy protection to the _executeTrade function using OpenZeppelin's nonReentrant modifier. Implement a more robust delegatecall pattern with explicit permission checks for the TradingModule implementation. Consider implementing a whitelist of authorized TradingModule implementations that each vault can use, rather than relying on a global constant.",
+      "agents_reporting": [
+        "reentrancy-agent",
+        "delegatecall-analysis-agent"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "Missing staleness checks for Chainlink oracle data in PendlePTOracle",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Oracle Manipulation",
+      "description": "The PendlePTOracle lacks proper validation of Chainlink oracle data staleness. In the _calculateBaseToQuote function, it retrieves price data via latestRoundData but only checks that the returned price is positive (baseToUSD > 0). It doesn't verify that the price data is recent by checking the updatedAt timestamp against a maximum acceptable age. This allows stale prices to be used in calculations, potentially leading to incorrect valuations during market volatility. An attacker could exploit this during periods of high price volatility or if the Chainlink oracle becomes temporarily unavailable, leading to incorrect pricing of PT tokens and potentially allowing advantageous trades at the expense of users or the protocol.",
+      "location": {
+        "file": "src/oracles/PendlePTOracle.sol",
+        "lines": "68-89"
+      },
+      "recommendation": "Implement proper staleness checks for oracle data by adding validation for the updatedAt timestamp: `require(block.timestamp - updatedAt <= MAX_ORACLE_STALENESS, \"Stale Oracle Data\");` where MAX_ORACLE_STALENESS is a reasonable timeframe based on the expected heartbeat of the oracle (e.g., 1 hour for most Chainlink feeds). Additionally, validate that answeredInRound >= roundId to ensure the answer is from the requested round or a more recent one.",
+      "agents_reporting": [
+        "oracle-analysis-agent"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "Unvalidated Pendle TWAP duration enables price manipulation",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Oracle Manipulation",
+      "description": "The PendlePTOracle constructor accepts a twapDuration parameter without enforcing a minimum duration. While it does check that the Pendle oracle has sufficient observations for the specified duration, it doesn't ensure the duration is long enough to prevent manipulation. A short TWAP duration (e.g., a few blocks) makes the oracle susceptible to flash loan attacks where an attacker can manipulate the Pendle market price within a single transaction or across a small number of blocks. This vulnerability is particularly concerning because the oracle is used for critical operations like collateral valuation and liquidation thresholds in the Morpho lending integration.",
+      "location": {
+        "file": "src/oracles/PendlePTOracle.sol",
+        "lines": "22-58"
+      },
+      "recommendation": "Implement a minimum TWAP duration in the constructor: `require(twapDuration_ >= MIN_TWAP_DURATION, \"TWAP too short\");` where MIN_TWAP_DURATION is set to a reasonably safe value (e.g., 30 minutes or 1 hour) to protect against short-term market manipulation. Additionally, consider adding a maximum duration to prevent excessively stale data.",
+      "agents_reporting": [
+        "oracle-analysis-agent"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "Fee calculation in AbstractYieldStrategy vulnerable to precision loss",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "Precision Errors",
+      "description": "The `_calculateAdditionalFeesInYieldToken` function in AbstractYieldStrategy uses a Taylor series approximation to calculate the exponential function for fee accrual, but has multiple precision issues. First, it uses DEFAULT_PRECISION (1e18) for intermediate calculations without proper scaling, leading to significant precision loss in the exponentiation approximation. Second, higher-order terms in the Taylor expansion divide by powers of DEFAULT_PRECISION, causing them to quickly become zero for small values of x. Third, there's no validation of timeSinceLastFeeAccrual, which could cause extreme values when fee accrual hasn't happened for a long time. These precision errors compound over time and can lead to systematic undercollection of fees or, in extreme cases, incorrect valuation of shares.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "311-324"
+      },
+      "recommendation": "Replace the Taylor series approximation with a more accurate fixed-point exponentiation implementation. Use OpenZeppelin's Math library or implement a more precise algorithm with appropriate scaling. Add an upper bound check for timeSinceLastFeeAccrual to prevent excessive fee calculations in a single update. Consider using PRBMath or a similar library for more accurate fixed-point calculations.",
+      "agents_reporting": [
+        "math-precision-agent"
+      ]
+    },
+    {
+      "id": "F-006",
+      "title": "Incorrect rounding in token conversion functions can drain value over time",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Precision Errors",
+      "description": "Several conversion functions in AbstractYieldStrategy consistently round down during division operations, creating a systematic bias that can be exploited. The `convertSharesToYieldToken`, `convertYieldTokenToShares`, and `convertToShares` functions all use integer division that rounds down. In particular, `convertToShares` performs multiple divisions in sequence (line 112-114), compounding the rounding errors. Over time or with many small transactions, this can lead to value extraction where users performing many small deposits and withdrawals can extract more value than they put in. This vulnerability is more severe in high-value pools or with tokens that have few decimals.",
+      "location": {
+        "file": "src/AbstractYieldStrategy.sol",
+        "lines": "98-115"
+      },
+      "recommendation": "Implement consistent rounding direction that favors the protocol when needed. When calculating shares to give to users (minting), round down. When calculating shares to take from users (burning), round up. Refactor the conversion functions to use a consistent approach, and consider adding a small buffer (e.g., 1-2 basis points) to protect against precision attacks. Explicitly document the rounding behavior in comments.",
+      "agents_reporting": [
+        "math-precision-agent"
+      ]
+    },
+    {
+      "id": "F-007",
+      "title": "Missing slippage protection in PendlePTLib's redeemExpiredPT",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "Cross-protocol integration bugs",
+      "description": "The `redeemExpiredPT` function in PendlePTLib lacks any slippage protection when redeeming Pendle PT tokens and subsequently redeeming the SY tokens. The function calls `sy.redeem` with a minTokenOut parameter of 0 (line 87), allowing for any amount of output tokens regardless of market conditions. If the SY token's value decreases significantly between the transaction submission and execution, users could receive far fewer tokens than expected. This is particularly problematic during market volatility or if the underlying yield-bearing asset experiences issues. An attacker could also use this vulnerability to front-run large redemptions, manipulating the exchange rate to extract value.",
+      "location": {
+        "file": "src/staking/PendlePTLib.sol",
+        "lines": "77-88"
+      },
+      "recommendation": "Modify the redeemExpiredPT function to accept a minimum output parameter and pass it to the sy.redeem call: `function redeemExpiredPT(IPPrincipalToken pt, IPYieldToken yt, IStandardizedYield sy, address tokenOutSy, uint256 netPtIn, uint256 minTokenOut) external returns (uint256 netTokenOut)`. Then update the call to `netTokenOut = sy.redeem(address(this), netSyOut, tokenOutSy, minTokenOut, true);`. Update all calling contracts to provide appropriate slippage protection based on current market conditions.",
+      "agents_reporting": [
+        "cross-protocol-integration-agent"
+      ]
+    },
+    {
+      "id": "F-008",
+      "title": "Withdraw request manipulation in tokenizeWithdrawRequest",
+      "severity": "high",
+      "confidence": "high",
+      "category": "Withdraw request manipulation",
+      "description": "The `tokenizeWithdrawRequest` function in AbstractWithdrawRequestManager has a critical vulnerability that allows manipulation during liquidations. When transferring a withdraw request from a liquidated account to a liquidator, it first creates or updates the destination withdraw request (toWithdraw) before deleting or updating the source request. If the function reverts after updating toWithdraw but before updating the source request (e.g., due to an out-of-gas error or another revert in a subsequent operation), the same withdraw request amount can be claimed multiple times by repeatedly calling the function. Additionally, the function doesn't properly handle the case where both accounts have pending withdraws for different request IDs, potentially allowing a malicious liquidator to steal withdraw requests by forcing liquidation of positions with pending withdraws.",
+      "location": {
+        "file": "src/withdraws/AbstractWithdrawRequestManager.sol",
+        "lines": "162-204"
+      },
+      "recommendation": "Implement a Checks-Effects-Interactions pattern for tokenizeWithdrawRequest. First perform all necessary validations, then update the source withdraw request, and only then update the destination. Use temporary variables instead of directly modifying storage until all calculations are complete. Add a transfer lock to prevent reentrancy. Consider implementing the function as an atomic operation that either completes fully or reverts completely, without partial state changes.",
+      "agents_reporting": [
+        "withdraw-request-agent"
+      ]
+    }
+  ],
+  "raw_output": "# Security Audit Report: Notional Finance Leveraged Vault Strategies\n\n## Overview\n\nThis security audit examined Notional Finance's Leveraged Vault Strategies codebase, focusing on the integration with Morpho Blue (lending), Curve (AMM), and Pendle V2 (yield tokenization) protocols. The audit identified several critical and high-severity vulnerabilities that could lead to fund loss, oracle manipulation, and denial of service.\n\n## Audit Scope\n\n- **Repository:** `targets/notional-finance/repo`\n- **Commit:** `0096f1f64071cafbf20062a7c092c6ec89c28275`\n- **Files:** All Solidity files under `src/` - **1,959 nSLOC** across 27 contracts\n\n## Summary of Findings\n\n- **Critical:** 1\n- **High:** 3\n- **Medium:** 4\n- **Total:** 8\n\n## Critical Findings\n\n### [F-002] Delegatecall to TradingModule without reentrancy protection in AbstractYieldStrategy\n\nThe `_executeTrade` function uses delegatecall to invoke the TradingModule without reentrancy protection. This creates a potential attack vector where a compromised or malicious TradingModule implementation could manipulate the vault's state, leading to direct fund theft.\n\n## High Findings\n\n### [F-001] Incorrect sequencer uptime checks in AbstractCustomOracle\n\nThe sequencer uptime verification logic is inverted, causing the oracle to reject valid prices during normal operation and potentially accept manipulated prices during sequencer downtime.\n\n### [F-003] Missing staleness checks for Chainlink oracle data in PendlePTOracle\n\nThe oracle implementation fails to validate the freshness of Chainlink price data, allowing stale prices to be used in critical valuation functions, which can lead to incorrect liquidations or mispriced assets.\n\n### [F-008] Withdraw request manipulation in tokenizeWithdrawRequest\n\nA vulnerability in the withdraw request tokenization process allows malicious actors to potentially claim the same withdraw request multiple times or steal another user's withdraw request during liquidation.\n\n## Medium Findings\n\n### [F-004] Unvalidated Pendle TWAP duration enables price manipulation\n\nThe lack of minimum requirements for TWAP duration makes the PendlePTOracle vulnerable to short-term price manipulation through flash loans or coordinated trading.\n\n### [F-005] Fee calculation in AbstractYieldStrategy vulnerable to precision loss\n\nThe Taylor series approximation used for fee calculation suffers from significant precision loss, potentially leading to systematic fee undercollection or incorrect share valuation.\n\n### [F-006] Incorrect rounding in token conversion functions can drain value over time\n\nConsistent downward rounding in conversion functions creates a systematic bias that can be exploited through multiple small transactions to extract value.\n\n### [F-007] Missing slippage protection in PendlePTLib's redeemExpiredPT\n\nThe lack of slippage protection when redeeming expired PT tokens leaves users vulnerable to front-running and unexpected losses during market volatility.\n\n## Recommendations\n\n1. Implement comprehensive reentrancy protection across all external calls, especially in delegatecall patterns\n2. Add proper oracle validation including freshness checks and sequencer uptime verification\n3. Review all mathematical operations for precision issues and implement consistent rounding strategies\n4. Add slippage protection to all cross-protocol interactions\n5. Implement proper atomic state updates for critical operations like withdraw request transfers\n6. Add circuit breakers for extreme market conditions\n\nThese vulnerabilities should be addressed before deployment to mainnet to prevent potential loss of user funds and ensure the protocol operates securely."
+}

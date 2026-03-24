@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import reportsData from "virtual:reports";
 import type { ReportsMap } from "./types";
 import { ComparisonView } from "./ComparisonView";
@@ -8,12 +8,55 @@ import "./responsive.css";
 const reports = reportsData as ReportsMap;
 const targets = Object.keys(reports);
 
+function parseHash(): { target?: string; tab?: string; model?: string } {
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  return {
+    target: params.get("target") || undefined,
+    tab: params.get("tab") || undefined,
+    model: params.get("model") || undefined,
+  };
+}
+
+function buildHash(target: string, tab: string, model: string | null): string {
+  const params = new URLSearchParams();
+  params.set("target", target);
+  params.set("tab", tab);
+  if (model) params.set("model", model);
+  return "#" + params.toString();
+}
+
 export function App() {
-  const [activeTarget, setActiveTarget] = useState(targets[0] || "");
-  const [activeTab, setActiveTab] = useState<"comparison" | "details">(
-    "comparison"
+  const initial = parseHash();
+  const [activeTarget, setActiveTarget] = useState(
+    initial.target && targets.includes(initial.target) ? initial.target : targets[0] || ""
   );
-  const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"comparison" | "details">(
+    initial.tab === "details" ? "details" : "comparison"
+  );
+  const [selectedModel, setSelectedModel] = useState<string | null>(
+    initial.model || null
+  );
+
+  // Sync state to URL hash
+  useEffect(() => {
+    const hash = buildHash(activeTarget, activeTab, selectedModel);
+    if (window.location.hash !== hash) {
+      window.history.pushState(null, "", hash);
+    }
+  }, [activeTarget, activeTab, selectedModel]);
+
+  // Listen for back/forward navigation
+  const onHashChange = useCallback(() => {
+    const h = parseHash();
+    if (h.target && targets.includes(h.target)) setActiveTarget(h.target);
+    if (h.tab === "details" || h.tab === "comparison") setActiveTab(h.tab);
+    setSelectedModel(h.model || null);
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("popstate", onHashChange);
+    return () => window.removeEventListener("popstate", onHashChange);
+  }, [onHashChange]);
 
   const targetReports = reports[activeTarget] || [];
 

@@ -1,0 +1,9 @@
+2026/03/24 14:30:53 WARN FZF not found in $PATH. Some features might be limited or slower.
+I've completed the security audit for the Notional Finance Leveraged Vault Strategies codebase. The audit report has been saved to the requested location:
+
+/home/vscode/projects/security-audit-skills-benchmark/reports/notional-finance/run-1/opencode-ai-qwen3.5-27b.json
+
+The audit identified 8 security vulnerabilities:
+- 1 Critical: Delegatecall vulnerability in AbstractYieldStrategy
+- 3 High: Oracle manipulation issues and withdraw request vulnerabilities 
+- 4 Medium: Precision errors, slippage protection gaps, and TWAP manipulation risks
