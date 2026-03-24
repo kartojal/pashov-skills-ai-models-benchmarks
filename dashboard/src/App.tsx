@@ -3,6 +3,7 @@ import reportsData from "virtual:reports";
 import type { ReportsMap } from "./types";
 import { ComparisonView } from "./ComparisonView";
 import { DetailView } from "./DetailView";
+import { AggregatedFindingsView } from "./AggregatedFindingsView";
 import "./responsive.css";
 
 const reports = reportsData as ReportsMap;
@@ -30,8 +31,8 @@ export function App() {
   const [activeTarget, setActiveTarget] = useState(
     initial.target && targets.includes(initial.target) ? initial.target : targets[0] || ""
   );
-  const [activeTab, setActiveTab] = useState<"comparison" | "details">(
-    initial.tab === "details" ? "details" : "comparison"
+  const [activeTab, setActiveTab] = useState<"comparison" | "details" | "aggregated">(
+    initial.tab === "details" ? "details" : initial.tab === "aggregated" ? "aggregated" : "comparison"
   );
   const [selectedModel, setSelectedModel] = useState<string | null>(
     initial.model || null
@@ -49,7 +50,7 @@ export function App() {
   const onHashChange = useCallback(() => {
     const h = parseHash();
     if (h.target && targets.includes(h.target)) setActiveTarget(h.target);
-    if (h.tab === "details" || h.tab === "comparison") setActiveTab(h.tab);
+    if (h.tab === "details" || h.tab === "comparison" || h.tab === "aggregated") setActiveTab(h.tab);
     setSelectedModel(h.model || null);
   }, []);
 
@@ -138,7 +139,7 @@ export function App() {
           gap: 4,
         }}
       >
-        {(["comparison", "details"] as const).map((tab) => (
+        {(["comparison", "details", "aggregated"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -160,7 +161,9 @@ export function App() {
           >
             {tab === "comparison"
               ? "Comparison Charts"
-              : "Findings Per Model"}
+              : tab === "details"
+                ? "Findings Per Model"
+                : "All Findings"}
           </button>
         ))}
       </nav>
@@ -188,6 +191,8 @@ export function App() {
               setActiveTab("details");
             }}
           />
+        ) : activeTab === "aggregated" ? (
+          <AggregatedFindingsView reports={sortedReports} />
         ) : (
           <DetailView
             reports={sortedReports}
