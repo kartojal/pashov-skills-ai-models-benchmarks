@@ -188,7 +188,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         ctx.font = `${fontSize}px sans-serif`;
         ctx.fillStyle = "#ccc";
         lines.forEach((line: string, li: number) => {
-          ctx.fillText(line, x, yBase + 12 + li * lineHeight);
+          ctx.fillText(line, x, yBase + 26 + li * lineHeight);
         });
       });
 

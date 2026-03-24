@@ -7,7 +7,7 @@ import { AggregatedFindingsView } from "./AggregatedFindingsView";
 import "./responsive.css";
 
 const reports = reportsData as ReportsMap;
-const targets = Object.keys(reports);
+const targets = Object.keys(reports).filter((t) => t !== "notional-finance");
 
 function parseHash(): { target?: string; tab?: string; model?: string } {
   const params = new URLSearchParams(window.location.hash.slice(1));
@@ -102,28 +102,107 @@ export function App() {
               Pashov Skills &times; AI Models Comparison
             </p>
           </div>
-          <div className="target-buttons" style={{ display: "flex", gap: 8 }}>
-            {targets.map((t) => (
-              <button
-                key={t}
-                onClick={() => setActiveTarget(t)}
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <div className="target-buttons" style={{ display: "flex", gap: 8 }}>
+              {targets.map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setActiveTarget(t)}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: 8,
+                    border:
+                      t === activeTarget
+                        ? "1px solid #6366f1"
+                        : "1px solid #2a2a4a",
+                    background: t === activeTarget ? "#6366f120" : "transparent",
+                    color: t === activeTarget ? "#a5b4fc" : "#8888aa",
+                    cursor: "pointer",
+                    fontSize: 13,
+                    fontWeight: 500,
+                  }}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <a
+                href="https://github.com/kartojal/pashov-skills-ai-models-benchmarks"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Star on GitHub"
                 style={{
-                  padding: "8px 16px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "6px 12px",
                   borderRadius: 8,
-                  border:
-                    t === activeTarget
-                      ? "1px solid #6366f1"
-                      : "1px solid #2a2a4a",
-                  background: t === activeTarget ? "#6366f120" : "transparent",
-                  color: t === activeTarget ? "#a5b4fc" : "#8888aa",
-                  cursor: "pointer",
+                  border: "1px solid #2a2a4a",
+                  background: "transparent",
+                  color: "#8888aa",
+                  textDecoration: "none",
                   fontSize: 13,
                   fontWeight: 500,
+                  transition: "border-color 0.2s, color 0.2s",
+                }}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.borderColor = "#6366f1";
+                  e.currentTarget.style.color = "#a5b4fc";
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.borderColor = "#2a2a4a";
+                  e.currentTarget.style.color = "#8888aa";
                 }}
               >
-                {t}
-              </button>
-            ))}
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25z" />
+                </svg>
+                Star
+              </a>
+              <a
+                href="https://x.com/pashov"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="@pashov"
+              >
+                <img
+                  src="https://avatars.githubusercontent.com/u/32573397?v=4"
+                  alt="Pashov"
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: "50%",
+                    border: "2px solid #2a2a4a",
+                    objectFit: "cover",
+                    transition: "border-color 0.2s",
+                  }}
+                  onMouseOver={(e) => (e.currentTarget.style.borderColor = "#6366f1")}
+                  onMouseOut={(e) => (e.currentTarget.style.borderColor = "#2a2a4a")}
+                />
+              </a>
+              <a
+                href="https://x.com/kartojal"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="@kartojal"
+              >
+                <img
+                  src="https://avatars.githubusercontent.com/u/11179847?v=4"
+                  alt="Kartojal"
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: "50%",
+                    border: "2px solid #2a2a4a",
+                    objectFit: "cover",
+                    transition: "border-color 0.2s",
+                  }}
+                  onMouseOver={(e) => (e.currentTarget.style.borderColor = "#6366f1")}
+                  onMouseOut={(e) => (e.currentTarget.style.borderColor = "#2a2a4a")}
+                />
+              </a>
+            </div>
           </div>
         </div>
       </header>
