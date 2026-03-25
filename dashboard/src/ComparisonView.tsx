@@ -104,7 +104,7 @@ function makeBarLogosPlugin(models: string[], stacked = false) {
 
         // Draw logo centered horizontally, near top of bar
         const drawX = barX - logoSize / 2;
-        const drawY = barTop + 4;
+        const drawY = barTop + 10;
 
         ctx.save();
         // Draw circular white background
