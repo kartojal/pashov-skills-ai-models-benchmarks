@@ -323,14 +323,6 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
 
   // High-severity fidelity: match count against only human HIGH findings
   const humanHighFindings = humanFindings.filter((f) => f.severity === "high");
-  const highFidelityScores = aiReports
-    .map((r) => ({
-      report: r,
-      matches: countMatches(r.findings, humanHighFindings),
-    }))
-    .sort((a, b) => b.matches - a.matches);
-  const bestHighFidelity = highFidelityScores[0];
-
   // Fidelity chart data (sorted by matches descending)
   const fidelityData = {
     labels: fidelityScores.map((s) => chartLabel(s.report)),
@@ -346,25 +338,9 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
     ],
   };
 
-  // High fidelity chart data (sorted by matches descending)
-  const highFidelityData = {
-    labels: highFidelityScores.map((s) => chartLabel(s.report)),
-    datasets: [
-      {
-        label: "Matched High Findings",
-        data: highFidelityScores.map((s) => s.matches),
-        backgroundColor: highFidelityScores.map((s) =>
-          s === bestHighFidelity ? "#f97316" : "#f9731680"
-        ),
-        borderRadius: 6,
-      },
-    ],
-  };
-
   // Logo plugins for each chart
   const severityLogosPlugin = makeBarLogosPlugin(aiReports.map((r) => r.metadata.model), true);
   const fidelityLogosPlugin = makeBarLogosPlugin(fidelityScores.map((s) => s.report.metadata.model));
-  const highFidelityLogosPlugin = makeBarLogosPlugin(highFidelityScores.map((s) => s.report.metadata.model));
   const durationLogosPlugin = makeBarLogosPlugin(aiReports.map((r) => r.metadata.model));
 
   return (
@@ -431,16 +407,6 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
 
       {/* Charts Grid */}
       <div className="charts-grid" style={{ width: "98vw", maxWidth: "98vw", marginLeft: "calc(-49vw + 50%)", boxSizing: "border-box", padding: 10 }}>
-        {/* Findings by Severity */}
-        <div>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>
-            Findings by Severity
-          </h3>
-          <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
-            <Bar data={severityData} options={stackedOptions as any} plugins={[staggerLabelsPlugin, severityLogosPlugin]} />
-          </div>
-        </div>
-
         {/* Fidelity vs Human */}
         <div>
           <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>
@@ -451,13 +417,13 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
           </div>
         </div>
 
-        {/* Fidelity vs Human Highs */}
+        {/* Findings by Severity */}
         <div>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#f97316", marginBottom: 12 }}>
-            Fidelity vs Human Highs ({humanHighFindings.length} high findings)
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>
+            Findings by Severity
           </h3>
           <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
-            <Bar data={highFidelityData} options={chartOptions as any} plugins={[staggerLabelsPlugin, highFidelityLogosPlugin]} />
+            <Bar data={severityData} options={stackedOptions as any} plugins={[staggerLabelsPlugin, severityLogosPlugin]} />
           </div>
         </div>
 
