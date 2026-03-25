@@ -126,8 +126,22 @@
     gap: 10px;
     align-items: flex-start !important;
   }
+  .header-top-row {
+    width: 100% !important;
+  }
   .app-header h1 {
     font-size: 18px !important;
+  }
+  .header-actions {
+    gap: 6px !important;
+  }
+  .header-actions img {
+    width: 26px !important;
+    height: 26px !important;
+  }
+  .header-actions a[title="Star on GitHub"] {
+    padding: 4px 8px !important;
+    font-size: 11px !important;
   }
   .target-buttons {
     flex-wrap: wrap;
