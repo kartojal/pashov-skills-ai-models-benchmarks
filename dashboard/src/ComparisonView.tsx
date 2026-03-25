@@ -277,7 +277,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             label: "Best Fidelity vs Human",
             value: bestFidelity ? shortLabel(bestFidelity.report) : "-",
             sub: bestFidelity ? `${bestFidelity.matches}/${humanFindings.length} matched` : "",
-            color: "#22c55e",
+            color: "#ffffff",
             smallValue: true,
           },
         ].map((card, i) => (
