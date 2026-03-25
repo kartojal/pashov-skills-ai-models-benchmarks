@@ -2,28 +2,11 @@ import { useState, useMemo } from "react";
 import type { Report, Finding } from "./types";
 import { getModelLogo } from "./modelLogos";
 import { matchScore } from "./findingMatcher";
+import { NEON_SEVERITY_COLORS, NEON_SEVERITY_BG, NEON_CONFIDENCE_COLORS, NEON } from "./neonTheme";
 
-const SEVERITY_COLORS: Record<string, string> = {
-  critical: "#ef4444",
-  high: "#f97316",
-  medium: "#eab308",
-  low: "#3b82f6",
-  informational: "#8b5cf6",
-};
-
-const SEVERITY_BG: Record<string, string> = {
-  critical: "#ef444420",
-  high: "#f9731620",
-  medium: "#eab30820",
-  low: "#3b82f620",
-  informational: "#8b5cf620",
-};
-
-const CONFIDENCE_COLORS: Record<string, string> = {
-  high: "#22c55e",
-  medium: "#eab308",
-  low: "#ef4444",
-};
+const SEVERITY_COLORS = NEON_SEVERITY_COLORS;
+const SEVERITY_BG = NEON_SEVERITY_BG;
+const CONFIDENCE_COLORS = NEON_CONFIDENCE_COLORS;
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "informational"];
 
@@ -181,8 +164,8 @@ export function AggregatedFindingsView({ reports }: Props) {
       {/* Filters + severity pills */}
       <div
         style={{
-          background: "#12121f",
-          border: "1px solid #2a2a4a",
+          background: NEON.surface,
+          border: `1px solid ${NEON.border}`,
           borderRadius: 12,
           padding: "20px 24px",
           marginBottom: 16,
@@ -196,7 +179,7 @@ export function AggregatedFindingsView({ reports }: Props) {
             alignItems: "center",
           }}
         >
-          <h2 style={{ fontSize: 18, fontWeight: 700, color: "#e0e0e8" }}>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: NEON.textPrimary }}>
             All Aggregated Findings
           </h2>
           <div className="severity-filters" style={{ display: "flex", gap: 8 }}>
@@ -214,22 +197,22 @@ export function AggregatedFindingsView({ reports }: Props) {
                     borderRadius: 6,
                     border:
                       sev === severityFilter
-                        ? `1px solid ${sev === "all" ? "#6366f1" : SEVERITY_COLORS[sev]}`
-                        : "1px solid #2a2a4a",
+                        ? `1px solid ${sev === "all" ? NEON.accent : SEVERITY_COLORS[sev]}`
+                        : `1px solid ${NEON.border}`,
                     background:
                       sev === severityFilter
                         ? sev === "all"
-                          ? "#6366f120"
+                          ? `${NEON.accent}20`
                           : SEVERITY_BG[sev]
                         : "transparent",
                     color:
                       sev === "all"
                         ? severityFilter === "all"
-                          ? "#a5b4fc"
-                          : "#666680"
+                          ? NEON.accentLight
+                          : NEON.textMuted
                         : sev === severityFilter
                           ? SEVERITY_COLORS[sev]
-                          : "#666680",
+                          : NEON.textMuted,
                     cursor: "pointer",
                     fontSize: 11,
                     fontWeight: 600,
@@ -264,7 +247,7 @@ export function AggregatedFindingsView({ reports }: Props) {
               <span
                 style={{
                   fontSize: 12,
-                  color: "#8888aa",
+                  color: NEON.textSecondary,
                   textTransform: "capitalize",
                 }}
               >
@@ -296,10 +279,10 @@ export function AggregatedFindingsView({ reports }: Props) {
             style={{
               textAlign: "center",
               padding: 60,
-              color: "#666680",
-              background: "#12121f",
+              color: NEON.textMuted,
+              background: NEON.surface,
               borderRadius: 12,
-              border: "1px solid #2a2a4a",
+              border: `1px solid ${NEON.border}`,
             }}
           >
             No findings match this filter.
@@ -314,16 +297,16 @@ function SummaryCard({ label, value }: { label: string; value: string | number }
   return (
     <div
       style={{
-        background: "#12121f",
-        border: "1px solid #2a2a4a",
+        background: NEON.surface,
+        border: `1px solid ${NEON.border}`,
         borderRadius: 12,
         padding: "20px 24px",
       }}
     >
-      <div style={{ fontSize: 11, color: "#666680", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+      <div style={{ fontSize: 11, color: NEON.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>
         {label}
       </div>
-      <div style={{ fontSize: 28, fontWeight: 700, color: "#e0e0e8", marginTop: 6 }}>
+      <div style={{ fontSize: 28, fontWeight: 700, color: NEON.textPrimary, marginTop: 6 }}>
         {value}
       </div>
     </div>
@@ -344,8 +327,8 @@ function AggregatedFindingCard({
   return (
     <div
       style={{
-        background: "#12121f",
-        border: `1px solid ${expanded ? SEVERITY_COLORS[finding.severity] + "40" : "#2a2a4a"}`,
+        background: NEON.surface,
+        border: `1px solid ${expanded ? SEVERITY_COLORS[finding.severity] + "40" : NEON.border}`,
         borderRadius: 12,
         overflow: "hidden",
         transition: "border-color 0.2s",
@@ -365,7 +348,7 @@ function AggregatedFindingCard({
           background: "transparent",
           cursor: "pointer",
           textAlign: "left",
-          color: "#e0e0e8",
+          color: NEON.textPrimary,
         }}
       >
         <span
@@ -398,10 +381,10 @@ function AggregatedFindingCard({
             fontWeight: 600,
             background:
               finding.confidence === "high"
-                ? "#22c55e20"
+                ? `${NEON.humanMatch}20`
                 : finding.confidence === "medium"
-                  ? "#eab30820"
-                  : "#ef444420",
+                  ? `${NEON_CONFIDENCE_COLORS.medium}20`
+                  : `${NEON_CONFIDENCE_COLORS.low}20`,
             color: CONFIDENCE_COLORS[finding.confidence],
           }}
         >
@@ -411,10 +394,10 @@ function AggregatedFindingCard({
           className="finding-category"
           style={{
             fontSize: 11,
-            color: "#666680",
+            color: NEON.textMuted,
             padding: "2px 8px",
             borderRadius: 4,
-            background: "#1a1a2e",
+            background: NEON.tagBg,
           }}
         >
           {finding.category}
@@ -426,9 +409,9 @@ function AggregatedFindingCard({
             borderRadius: 6,
             fontSize: 10,
             fontWeight: 700,
-            background: models.length > 1 ? "#6366f120" : "#2a2a4a40",
-            color: models.length > 1 ? "#a5b4fc" : "#666680",
-            border: models.length > 1 ? "1px solid #6366f130" : "1px solid #2a2a4a",
+            background: models.length > 1 ? `${NEON.accent}20` : `${NEON.border}40`,
+            color: models.length > 1 ? NEON.accentLight : NEON.textMuted,
+            border: models.length > 1 ? `1px solid ${NEON.accent}30` : `1px solid ${NEON.border}`,
             whiteSpace: "nowrap",
           }}
         >
@@ -441,9 +424,9 @@ function AggregatedFindingCard({
               borderRadius: 6,
               fontSize: 10,
               fontWeight: 700,
-              background: "#22c55e20",
-              color: "#22c55e",
-              border: "1px solid #22c55e30",
+              background: `${NEON.humanMatch}20`,
+              color: NEON.humanMatch,
+              border: `1px solid ${NEON.humanMatchBorder}`,
               whiteSpace: "nowrap",
             }}
           >
@@ -453,7 +436,7 @@ function AggregatedFindingCard({
         <span
           style={{
             fontSize: 16,
-            color: "#666680",
+            color: NEON.textMuted,
             transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
             transition: "transform 0.2s",
           }}
@@ -476,7 +459,7 @@ function AggregatedFindingCard({
               style={{
                 fontSize: 11,
                 fontWeight: 600,
-                color: "#666680",
+                color: NEON.textMuted,
                 textTransform: "uppercase",
                 letterSpacing: "0.05em",
                 marginBottom: 8,
@@ -495,9 +478,9 @@ function AggregatedFindingCard({
                     padding: "4px 12px",
                     borderRadius: 6,
                     fontSize: 12,
-                    background: "#6366f115",
-                    color: "#a5b4fc",
-                    border: "1px solid #6366f125",
+                    background: `${NEON.accent}15`,
+                    color: NEON.accentLight,
+                    border: `1px solid ${NEON.accent}25`,
                   }}
                 >
                   {getModelLogo(model) && (
@@ -526,7 +509,7 @@ function AggregatedFindingCard({
                 style={{
                   fontSize: 11,
                   fontWeight: 600,
-                  color: "#666680",
+                  color: NEON.textMuted,
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
                   marginBottom: 6,
@@ -538,7 +521,7 @@ function AggregatedFindingCard({
                 style={{
                   padding: "12px 16px",
                   borderRadius: 8,
-                  background: "#22c55e08",
+                  background: `${NEON.humanMatch}08`,
                   border: "1px solid #22c55e20",
                 }}
               >
@@ -547,7 +530,7 @@ function AggregatedFindingCard({
                     style={{
                       fontFamily: "monospace",
                       fontSize: 11,
-                      color: "#666680",
+                      color: NEON.textMuted,
                     }}
                   >
                     {matchedHumanFinding.id}
@@ -565,11 +548,11 @@ function AggregatedFindingCard({
                   >
                     {matchedHumanFinding.severity}
                   </span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: "#88cc88" }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: NEON.humanMatch }}>
                     {matchedHumanFinding.title}
                   </span>
                 </div>
-                <p style={{ fontSize: 12, color: "#88aa88", lineHeight: 1.5 }}>
+                <p style={{ fontSize: 12, color: `${NEON.humanMatch}aa`, lineHeight: 1.5 }}>
                   {matchedHumanFinding.description}
                 </p>
               </div>
@@ -582,7 +565,7 @@ function AggregatedFindingCard({
               style={{
                 fontSize: 11,
                 fontWeight: 600,
-                color: "#666680",
+                color: NEON.textMuted,
                 textTransform: "uppercase",
                 letterSpacing: "0.05em",
                 marginBottom: 6,
@@ -590,7 +573,7 @@ function AggregatedFindingCard({
             >
               Description
             </div>
-            <p style={{ fontSize: 13, color: "#c0c0d0", lineHeight: 1.6 }}>
+            <p style={{ fontSize: 13, color: NEON.textPrimary, lineHeight: 1.6 }}>
               {finding.description}
             </p>
           </div>
@@ -602,7 +585,7 @@ function AggregatedFindingCard({
                 style={{
                   fontSize: 11,
                   fontWeight: 600,
-                  color: "#666680",
+                  color: NEON.textMuted,
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
                   marginBottom: 6,
@@ -613,8 +596,8 @@ function AggregatedFindingCard({
               <code
                 style={{
                   fontSize: 12,
-                  color: "#a5b4fc",
-                  background: "#1a1a2e",
+                  color: NEON.accentLight,
+                  background: NEON.tagBg,
                   padding: "4px 10px",
                   borderRadius: 6,
                 }}
@@ -631,7 +614,7 @@ function AggregatedFindingCard({
                 style={{
                   fontSize: 11,
                   fontWeight: 600,
-                  color: "#666680",
+                  color: NEON.textMuted,
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
                   marginBottom: 6,
@@ -642,9 +625,9 @@ function AggregatedFindingCard({
               <p
                 style={{
                   fontSize: 13,
-                  color: "#88cc88",
+                  color: NEON.humanMatch,
                   lineHeight: 1.6,
-                  background: "#22c55e08",
+                  background: `${NEON.humanMatch}08`,
                   padding: "10px 14px",
                   borderRadius: 8,
                   border: "1px solid #22c55e20",

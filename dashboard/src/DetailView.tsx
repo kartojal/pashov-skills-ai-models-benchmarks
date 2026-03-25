@@ -2,28 +2,11 @@ import { useState, useMemo } from "react";
 import type { Report, Finding } from "./types";
 import { getModelLogo } from "./modelLogos";
 import { getMatchedFindingIds } from "./findingMatcher";
+import { NEON_SEVERITY_COLORS, NEON_SEVERITY_BG, NEON_CONFIDENCE_COLORS, NEON } from "./neonTheme";
 
-const SEVERITY_COLORS: Record<string, string> = {
-  critical: "#ef4444",
-  high: "#f97316",
-  medium: "#eab308",
-  low: "#3b82f6",
-  informational: "#8b5cf6",
-};
-
-const SEVERITY_BG: Record<string, string> = {
-  critical: "#ef444420",
-  high: "#f9731620",
-  medium: "#eab30820",
-  low: "#3b82f620",
-  informational: "#8b5cf620",
-};
-
-const CONFIDENCE_COLORS: Record<string, string> = {
-  high: "#22c55e",
-  medium: "#eab308",
-  low: "#ef4444",
-};
+const SEVERITY_COLORS = NEON_SEVERITY_COLORS;
+const SEVERITY_BG = NEON_SEVERITY_BG;
+const CONFIDENCE_COLORS = NEON_CONFIDENCE_COLORS;
 
 interface Props {
   reports: Report[];
@@ -59,8 +42,8 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
       >
         <div
           style={{
-            background: "#12121f",
-            border: "1px solid #2a2a4a",
+            background: NEON.surface,
+            border: `1px solid ${NEON.border}`,
             borderRadius: 12,
             overflow: "hidden",
             position: "sticky",
@@ -70,10 +53,10 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
           <div
             style={{
               padding: "14px 20px",
-              borderBottom: "1px solid #2a2a4a",
+              borderBottom: `1px solid ${NEON.border}`,
               fontSize: 12,
               fontWeight: 600,
-              color: "#666680",
+              color: NEON.textMuted,
               textTransform: "uppercase",
               letterSpacing: "0.05em",
             }}
@@ -97,8 +80,8 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
                   borderLeft: isActive
                     ? "3px solid #6366f1"
                     : "3px solid transparent",
-                  background: isActive ? "#6366f110" : "transparent",
-                  color: isActive ? "#e0e0e8" : "#8888aa",
+                  background: isActive ? `${NEON.accent}10` : "transparent",
+                  color: isActive ? NEON.textPrimary : NEON.textSecondary,
                   cursor: "pointer",
                   textAlign: "left",
                   fontSize: 13,
@@ -117,7 +100,7 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
                 <div
                   style={{
                     fontSize: 11,
-                    color: "#666680",
+                    color: NEON.textMuted,
                     marginTop: 2,
                     display: "flex",
                     justifyContent: "space-between",
@@ -140,10 +123,10 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
             style={{
               textAlign: "center",
               padding: 80,
-              color: "#666680",
-              background: "#12121f",
+              color: NEON.textMuted,
+              background: NEON.surface,
               borderRadius: 12,
-              border: "1px solid #2a2a4a",
+              border: `1px solid ${NEON.border}`,
             }}
           >
             <p style={{ fontSize: 16 }}>Select a model to view findings</p>
@@ -153,8 +136,8 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
             {/* Report Header */}
             <div
               style={{
-                background: "#12121f",
-                border: "1px solid #2a2a4a",
+                background: NEON.surface,
+                border: `1px solid ${NEON.border}`,
                 borderRadius: 12,
                 padding: "20px 24px",
                 marginBottom: 16,
@@ -172,7 +155,7 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
                     style={{
                       fontSize: 20,
                       fontWeight: 700,
-                      color: "#e0e0e8",
+                      color: NEON.textPrimary,
                       display: "flex",
                       alignItems: "center",
                       gap: 10,
@@ -190,7 +173,7 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
                   <p
                     style={{
                       fontSize: 13,
-                      color: "#666680",
+                      color: NEON.textMuted,
                       marginTop: 4,
                     }}
                   >
@@ -225,22 +208,22 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
                           borderRadius: 6,
                           border:
                             sev === severityFilter
-                              ? `1px solid ${sev === "all" ? "#6366f1" : SEVERITY_COLORS[sev]}`
-                              : "1px solid #2a2a4a",
+                              ? `1px solid ${sev === "all" ? NEON.accent : SEVERITY_COLORS[sev]}`
+                              : `1px solid ${NEON.border}`,
                           background:
                             sev === severityFilter
                               ? sev === "all"
-                                ? "#6366f120"
+                                ? `${NEON.accent}20`
                                 : SEVERITY_BG[sev]
                               : "transparent",
                           color:
                             sev === "all"
                               ? severityFilter === "all"
-                                ? "#a5b4fc"
-                                : "#666680"
+                                ? NEON.accentLight
+                                : NEON.textMuted
                               : sev === severityFilter
                                 ? SEVERITY_COLORS[sev]
-                                : "#666680",
+                                : NEON.textMuted,
                           cursor: "pointer",
                           fontSize: 11,
                           fontWeight: 600,
@@ -285,7 +268,7 @@ export function DetailView({ reports, selectedModel, onSelectModel }: Props) {
                     <span
                       style={{
                         fontSize: 12,
-                        color: "#8888aa",
+                        color: NEON.textSecondary,
                         textTransform: "capitalize",
                       }}
                     >
@@ -338,8 +321,8 @@ function FindingCard({
   return (
     <div
       style={{
-        background: "#12121f",
-        border: `1px solid ${expanded ? SEVERITY_COLORS[finding.severity] + "40" : "#2a2a4a"}`,
+        background: NEON.surface,
+        border: `1px solid ${expanded ? SEVERITY_COLORS[finding.severity] + "40" : NEON.border}`,
         borderRadius: 12,
         overflow: "hidden",
         transition: "border-color 0.2s",
@@ -359,14 +342,14 @@ function FindingCard({
           background: "transparent",
           cursor: "pointer",
           textAlign: "left",
-          color: "#e0e0e8",
+          color: NEON.textPrimary,
         }}
       >
         <span
           style={{
             fontFamily: "monospace",
             fontSize: 11,
-            color: "#666680",
+            color: NEON.textMuted,
             minWidth: 40,
           }}
         >
@@ -406,10 +389,10 @@ function FindingCard({
             fontWeight: 600,
             background:
               finding.confidence === "high"
-                ? "#22c55e20"
+                ? `${NEON.humanMatch}20`
                 : finding.confidence === "medium"
-                  ? "#eab30820"
-                  : "#ef444420",
+                  ? `${NEON_CONFIDENCE_COLORS.medium}20`
+                  : `${NEON_CONFIDENCE_COLORS.low}20`,
             color: CONFIDENCE_COLORS[finding.confidence],
           }}
         >
@@ -419,10 +402,10 @@ function FindingCard({
           className="finding-category"
           style={{
             fontSize: 11,
-            color: "#666680",
+            color: NEON.textMuted,
             padding: "2px 8px",
             borderRadius: 4,
-            background: "#1a1a2e",
+            background: NEON.tagBg,
           }}
         >
           {finding.category}
@@ -434,8 +417,8 @@ function FindingCard({
               borderRadius: 6,
               fontSize: 10,
               fontWeight: 700,
-              background: "#22c55e20",
-              color: "#22c55e",
+              background: `${NEON.humanMatch}20`,
+              color: NEON.humanMatch,
               border: "1px solid #22c55e30",
               whiteSpace: "nowrap",
             }}
@@ -446,7 +429,7 @@ function FindingCard({
         <span
           style={{
             fontSize: 16,
-            color: "#666680",
+            color: NEON.textMuted,
             transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
             transition: "transform 0.2s",
           }}
@@ -469,7 +452,7 @@ function FindingCard({
               style={{
                 fontSize: 11,
                 fontWeight: 600,
-                color: "#666680",
+                color: NEON.textMuted,
                 textTransform: "uppercase",
                 letterSpacing: "0.05em",
                 marginBottom: 6,
@@ -480,7 +463,7 @@ function FindingCard({
             <p
               style={{
                 fontSize: 13,
-                color: "#c0c0d0",
+                color: NEON.textPrimary,
                 lineHeight: 1.6,
               }}
             >
@@ -495,7 +478,7 @@ function FindingCard({
                 style={{
                   fontSize: 11,
                   fontWeight: 600,
-                  color: "#666680",
+                  color: NEON.textMuted,
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
                   marginBottom: 6,
@@ -506,8 +489,8 @@ function FindingCard({
               <code
                 style={{
                   fontSize: 12,
-                  color: "#a5b4fc",
-                  background: "#1a1a2e",
+                  color: NEON.accentLight,
+                  background: NEON.tagBg,
                   padding: "4px 10px",
                   borderRadius: 6,
                 }}
@@ -524,7 +507,7 @@ function FindingCard({
                 style={{
                   fontSize: 11,
                   fontWeight: 600,
-                  color: "#666680",
+                  color: NEON.textMuted,
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
                   marginBottom: 6,
@@ -535,9 +518,9 @@ function FindingCard({
               <p
                 style={{
                   fontSize: 13,
-                  color: "#88cc88",
+                  color: NEON.humanMatch,
                   lineHeight: 1.6,
-                  background: "#22c55e08",
+                  background: `${NEON.humanMatch}08`,
                   padding: "10px 14px",
                   borderRadius: 8,
                   border: "1px solid #22c55e20",
@@ -555,7 +538,7 @@ function FindingCard({
                 style={{
                   fontSize: 11,
                   fontWeight: 600,
-                  color: "#666680",
+                  color: NEON.textMuted,
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
                   marginBottom: 6,
@@ -571,8 +554,8 @@ function FindingCard({
                       padding: "3px 10px",
                       borderRadius: 6,
                       fontSize: 11,
-                      background: "#6366f120",
-                      color: "#a5b4fc",
+                      background: `${NEON.accent}20`,
+                      color: NEON.accentLight,
                       border: "1px solid #6366f130",
                     }}
                   >

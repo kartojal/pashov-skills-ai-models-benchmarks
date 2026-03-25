@@ -5,6 +5,7 @@ import { ComparisonView } from "./ComparisonView";
 import { DetailView } from "./DetailView";
 import { AggregatedFindingsView } from "./AggregatedFindingsView";
 import "./responsive.css";
+import { NEON } from "./neonTheme";
 
 const reports = reportsData as ReportsMap;
 const targets = Object.keys(reports);
@@ -67,14 +68,15 @@ export function App() {
   );
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0a0a0f" }}>
+    <div style={{ minHeight: "100vh", background: NEON.bg }}>
       {/* Header */}
       <header
         className="app-header"
         style={{
-          background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)",
-          borderBottom: "1px solid #2a2a4a",
+          background: `linear-gradient(135deg, ${NEON.surfaceLight} 0%, #0a1628 50%, ${NEON.surface} 100%)`,
+          borderBottom: `1px solid ${NEON.border}`,
           padding: "20px 32px",
+          boxShadow: `0 2px 30px ${NEON.accent}15`,
         }}
       >
         <div
@@ -94,11 +96,12 @@ export function App() {
                   fontWeight: 700,
                   color: "#fff",
                   letterSpacing: "-0.02em",
+                  textShadow: `0 0 20px ${NEON.accent}80, 0 0 40px ${NEON.accent}30`,
                 }}
               >
                 AI Audit Web3 Benchmark
               </h1>
-              <p style={{ fontSize: 13, color: "#8888aa", marginTop: 4 }}>
+              <p style={{ fontSize: 13, color: NEON.textSecondary, marginTop: 4 }}>
                 Pashov Skills Comparison
               </p>
             </div>
@@ -116,19 +119,19 @@ export function App() {
                   borderRadius: 8,
                   border: "1px solid #2a2a4a",
                   background: "transparent",
-                  color: "#8888aa",
+                  color: NEON.textSecondary,
                   textDecoration: "none",
                   fontSize: 12,
                   fontWeight: 500,
                   transition: "border-color 0.2s, color 0.2s",
                 }}
                 onMouseOver={(e) => {
-                  e.currentTarget.style.borderColor = "#6366f1";
-                  e.currentTarget.style.color = "#a5b4fc";
+                  e.currentTarget.style.borderColor = NEON.accent;
+                  e.currentTarget.style.color = NEON.accentLight;
                 }}
                 onMouseOut={(e) => {
-                  e.currentTarget.style.borderColor = "#2a2a4a";
-                  e.currentTarget.style.color = "#8888aa";
+                  e.currentTarget.style.borderColor = NEON.border;
+                  e.currentTarget.style.color = NEON.textSecondary;
                 }}
               >
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
@@ -153,8 +156,8 @@ export function App() {
                     objectFit: "cover",
                     transition: "border-color 0.2s",
                   }}
-                  onMouseOver={(e) => (e.currentTarget.style.borderColor = "#6366f1")}
-                  onMouseOut={(e) => (e.currentTarget.style.borderColor = "#2a2a4a")}
+                  onMouseOver={(e) => (e.currentTarget.style.borderColor = NEON.accent)}
+                  onMouseOut={(e) => (e.currentTarget.style.borderColor = NEON.border)}
                 />
               </a>
               <a
@@ -174,8 +177,8 @@ export function App() {
                     objectFit: "cover",
                     transition: "border-color 0.2s",
                   }}
-                  onMouseOver={(e) => (e.currentTarget.style.borderColor = "#6366f1")}
-                  onMouseOut={(e) => (e.currentTarget.style.borderColor = "#2a2a4a")}
+                  onMouseOver={(e) => (e.currentTarget.style.borderColor = NEON.accent)}
+                  onMouseOut={(e) => (e.currentTarget.style.borderColor = NEON.border)}
                 />
               </a>
             </div>
@@ -207,8 +210,8 @@ export function App() {
                 tab === activeTab
                   ? "2px solid #6366f1"
                   : "2px solid transparent",
-              background: tab === activeTab ? "#1a1a2e" : "transparent",
-              color: tab === activeTab ? "#e0e0e8" : "#666680",
+              background: tab === activeTab ? NEON.surfaceLight : "transparent",
+              color: tab === activeTab ? NEON.textPrimary : NEON.textMuted,
               cursor: "pointer",
               fontSize: 14,
               fontWeight: 600,
@@ -231,7 +234,7 @@ export function App() {
             style={{
               textAlign: "center",
               padding: 80,
-              color: "#666680",
+              color: NEON.textMuted,
             }}
           >
             <p style={{ fontSize: 18 }}>No reports found for {activeTarget}</p>

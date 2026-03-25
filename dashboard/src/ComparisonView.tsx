@@ -13,6 +13,7 @@ import type { Report } from "./types";
 import { useIsMobile } from "./useIsMobile";
 import { getModelLogo } from "./modelLogos";
 import { matchScore, countMatches, countUniqueFindings } from "./findingMatcher";
+import { NEON_SEVERITY_COLORS, NEON, durationBarColor } from "./neonTheme";
 
 ChartJS.register(
   CategoryScale,
@@ -123,13 +124,7 @@ function makeBarLogosPlugin(models: string[], stacked = false) {
   };
 }
 
-const SEVERITY_COLORS: Record<string, string> = {
-  critical: "#ef4444",
-  high: "#f97316",
-  medium: "#eab308",
-  low: "#3b82f6",
-  informational: "#8b5cf6",
-};
+const SEVERITY_COLORS = NEON_SEVERITY_COLORS;
 
 function shortModel(model: string): string {
   // Strip provider prefix (e.g. "anthropic/claude-opus-4.6" -> "claude-opus-4.6")
@@ -206,8 +201,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         label: "Duration (seconds)",
         data: aiReports.map((r) => r.metadata.duration_seconds),
         backgroundColor: aiReports.map(
-          (_, i) =>
-            `hsl(${230 + i * 15}, 70%, ${55 + (i % 3) * 5}%)`
+          (_, i) => durationBarColor(i)
         ),
         borderRadius: 6,
       },
@@ -219,13 +213,13 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
     maintainAspectRatio: false,
     plugins: {
       legend: {
-        labels: { color: "#aaa", font: { size: isMobile ? 9 : 11 } },
+        labels: { color: NEON.legendText, font: { size: isMobile ? 9 : 11 } },
       },
     },
     scales: {
       x: {
         ticks: {
-          color: "#ccc",
+          color: NEON.tickX,
           font: { size: isMobile ? 8 : 11 },
           maxRotation: 0,
           minRotation: 0,
@@ -242,11 +236,11 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
           // Add extra height to accommodate staggered labels
           axis.paddingBottom = (axis.paddingBottom || 0) + (isMobile ? 34 : 14);
         },
-        grid: { color: "#1a1a2e" },
+        grid: { color: NEON.gridLine },
       },
       y: {
-        ticks: { color: "#888", stepSize: 1 },
-        grid: { color: "#1a1a2e" },
+        ticks: { color: NEON.tickY, stepSize: 1 },
+        grid: { color: NEON.gridLine },
       },
     },
     layout: {
@@ -283,7 +277,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
         ctx.font = `${fontSize}px sans-serif`;
-        ctx.fillStyle = "#ccc";
+        ctx.fillStyle = NEON.tickX;
         lines.forEach((line: string, li: number) => {
           ctx.fillText(line, x, yBase + li * lineHeight);
         });
@@ -339,7 +333,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         label: "Matched Findings",
         data: fidelityScores.map((s) => s.matches),
         backgroundColor: fidelityScores.map((s) =>
-          s === bestFidelity ? "#22c55e" : "#6366f1"
+          s === bestFidelity ? NEON.fidelityBest : NEON.fidelityOther
         ),
         borderRadius: 6,
       },
@@ -354,7 +348,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         label: "Matched High Findings",
         data: highFidelityScores.map((s) => s.matches),
         backgroundColor: highFidelityScores.map((s) =>
-          s === bestHighFidelity ? "#f97316" : "#f9731680"
+          s === bestHighFidelity ? NEON.highFidelityBest : NEON.highFidelityOther
         ),
         borderRadius: 6,
       },
@@ -376,13 +370,13 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             label: "Total Findings",
             value: `${totalFindings} unique`,
             sub: `${aggregatedCoverage}% aggregated AI vs human coverage`,
-            color: "#f97316",
+            color: NEON_SEVERITY_COLORS.high,
           },
           {
             label: "Best Fidelity vs Human",
             value: bestFidelity ? shortLabel(bestFidelity.report) : "-",
             sub: bestFidelity ? `${bestFidelity.matches}/${humanFindings.length} matched` : "",
-            color: "#ffffff",
+            color: NEON.accentLight,
             smallValue: true,
             logo: bestFidelity ? getModelLogo(bestFidelity.report.metadata.model) : null,
           },
@@ -391,13 +385,14 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             key={i}
             className="score-card"
             style={{
-              background: "#12121f",
-              border: "1px solid #2a2a4a",
+              background: NEON.surface,
+              border: `1px solid ${NEON.border}`,
               borderRadius: 12,
               padding: "20px 24px",
+              boxShadow: `0 0 20px ${NEON.accent}10`,
             }}
           >
-            <div style={{ fontSize: 12, color: "#666680", marginBottom: 8 }}>
+            <div style={{ fontSize: 12, color: NEON.textMuted, marginBottom: 8 }}>
               {card.label}
             </div>
             <div
@@ -421,7 +416,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
               {card.value}
             </div>
             {card.sub && (
-              <div style={{ fontSize: 11, color: "#666680", marginTop: 4 }}>
+              <div style={{ fontSize: 11, color: NEON.textMuted, marginTop: 4 }}>
                 {card.sub}
               </div>
             )}
@@ -433,7 +428,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
       <div className="charts-grid" style={{ width: "98vw", maxWidth: "98vw", marginLeft: "calc(-49vw + 50%)", boxSizing: "border-box", padding: 10 }}>
         {/* Findings by Severity */}
         <div>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: NEON.accentLight, marginBottom: 12, textShadow: `0 0 10px ${NEON.accent}60` }}>
             Findings by Severity
           </h3>
           <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
@@ -443,7 +438,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
 
         {/* Fidelity vs Human */}
         <div>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: NEON.accentLight, marginBottom: 12, textShadow: `0 0 10px ${NEON.accent}60` }}>
             Fidelity vs Human Audit ({humanFindings.length} findings)
           </h3>
           <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
@@ -453,7 +448,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
 
         {/* Fidelity vs Human Highs */}
         <div>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#f97316", marginBottom: 12 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: NEON.highFidelityBest, marginBottom: 12, textShadow: `0 0 10px ${NEON.highFidelityBest}60` }}>
             Fidelity vs Human Highs ({humanHighFindings.length} high findings)
           </h3>
           <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
@@ -463,7 +458,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
 
         {/* Duration */}
         <div>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: NEON.accentLight, marginBottom: 12, textShadow: `0 0 10px ${NEON.accent}60` }}>
             Audit Duration (seconds)
           </h3>
           <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
@@ -477,18 +472,21 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         className="leaderboard-wrapper"
         style={{
           marginTop: 24,
-          background: "#12121f",
-          border: "1px solid #2a2a4a",
+          background: NEON.surface,
+          border: `1px solid ${NEON.border}`,
           borderRadius: 12,
           overflow: "hidden",
+          boxShadow: `0 0 30px ${NEON.accent}08`,
         }}
       >
         <div
           style={{
             padding: "16px 24px",
-            borderBottom: "1px solid #2a2a4a",
+            borderBottom: `1px solid ${NEON.border}`,
             fontWeight: 600,
             fontSize: 15,
+            color: NEON.textPrimary,
+            textShadow: `0 0 10px ${NEON.accent}40`,
           }}
         >
           Leaderboard
@@ -505,8 +503,8 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
           <thead>
             <tr
               style={{
-                borderBottom: "1px solid #2a2a4a",
-                color: "#666680",
+                borderBottom: `1px solid ${NEON.border}`,
+                color: NEON.textMuted,
                 fontSize: 11,
                 textTransform: "uppercase",
                 letterSpacing: "0.05em",
@@ -559,7 +557,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                 <tr
                   key={i}
                   style={{
-                    borderBottom: "1px solid #1a1a2e",
+                    borderBottom: `1px solid ${NEON.gridLine}`,
                     cursor: "pointer",
                   }}
                   onClick={() => onSelectModel(r.metadata.model)}
@@ -570,12 +568,13 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                       fontWeight: 700,
                       color:
                         i === 0
-                          ? "#fbbf24"
+                          ? NEON.gold
                           : i === 1
-                            ? "#94a3b8"
+                            ? NEON.silver
                             : i === 2
-                              ? "#d97706"
-                              : "#666680",
+                              ? NEON.bronze
+                              : NEON.textMuted,
+                      textShadow: i < 3 ? `0 0 8px ${i === 0 ? NEON.gold : i === 1 ? NEON.silver : NEON.bronze}60` : "none",
                     }}
                   >
                     {i + 1}
@@ -584,7 +583,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                     style={{
                       padding: "12px 16px",
                       fontWeight: 600,
-                      color: "#e0e0e8",
+                      color: NEON.textPrimary,
                     }}
                   >
                     <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -598,7 +597,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                       {r.metadata.model}
                     </span>
                   </td>
-                  <td style={{ padding: "12px 16px", color: "#8888aa" }}>
+                  <td style={{ padding: "12px 16px", color: NEON.textSecondary }}>
                     {r.metadata.harness}
                   </td>
                   <td
@@ -606,7 +605,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                       padding: "12px 16px",
                       textAlign: "center",
                       fontWeight: 700,
-                      color: "#a5b4fc",
+                      color: NEON.accentLight,
                     }}
                   >
                     {r.summary.total_findings}
@@ -660,7 +659,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                     style={{
                       padding: "12px 16px",
                       textAlign: "center",
-                      color: "#8888aa",
+                      color: NEON.textSecondary,
                     }}
                   >
                     {r.metadata.duration_seconds}s
@@ -669,7 +668,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                     style={{
                       padding: "12px 16px",
                       textAlign: "center",
-                      color: "#a5b4fc",
+                      color: NEON.accentLight,
                       fontWeight: 600,
                       fontSize: 12,
                     }}
@@ -680,7 +679,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                     style={{
                       padding: "12px 16px",
                       textAlign: "center",
-                      color: "#f97316",
+                      color: NEON.highFidelityBest,
                       fontWeight: 600,
                       fontSize: 12,
                     }}
@@ -690,7 +689,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                   <td style={{ padding: "12px 16px" }}>
                     <span
                       style={{
-                        color: "#6366f1",
+                        color: NEON.accent,
                         fontSize: 12,
                         cursor: "pointer",
                       }}
