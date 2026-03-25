@@ -180,29 +180,7 @@ export function App() {
               </a>
             </div>
           </div>
-          <div className="target-buttons" style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            {targets.map((t) => (
-              <button
-                key={t}
-                onClick={() => setActiveTarget(t)}
-                style={{
-                  padding: "8px 16px",
-                  borderRadius: 8,
-                  border:
-                    t === activeTarget
-                      ? "1px solid #6366f1"
-                      : "1px solid #2a2a4a",
-                  background: t === activeTarget ? "#6366f120" : "transparent",
-                  color: t === activeTarget ? "#a5b4fc" : "#8888aa",
-                  cursor: "pointer",
-                  fontSize: 13,
-                  fontWeight: 500,
-                }}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
+          {/* Target buttons hidden – "notional-finance" remains selected by default */}
         </div>
       </header>
 

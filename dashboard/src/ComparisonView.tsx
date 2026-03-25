@@ -24,6 +24,105 @@ ChartJS.register(
   ArcElement
 );
 
+// Cache for preloaded logo images
+const logoImageCache: Record<string, HTMLImageElement | null> = {};
+
+function getOrLoadImage(src: string): HTMLImageElement | null {
+  if (src in logoImageCache) return logoImageCache[src];
+  logoImageCache[src] = null; // mark as loading
+  const img = new Image();
+  img.src = src;
+  img.onload = () => {
+    logoImageCache[src] = img;
+  };
+  return null;
+}
+
+/**
+ * Chart.js plugin that draws model logos inside each bar.
+ * Pass `models` array matching the bar indices.
+ * For stacked charts, set `stacked: true` to draw once per bar column.
+ */
+function makeBarLogosPlugin(models: string[], stacked = false) {
+  return {
+    id: "barLogos",
+    afterDatasetsDraw(chart: any) {
+      const ctx = chart.ctx;
+      const datasets = chart.data.datasets;
+      if (!datasets || datasets.length === 0) return;
+
+      // For stacked charts, we combine all dataset bars per index.
+      // For non-stacked, just use dataset 0.
+      const datasetIndex = stacked ? 0 : 0;
+      const meta = chart.getDatasetMeta(datasetIndex);
+      if (!meta?.data) return;
+
+      const logoSize = 18;
+
+      meta.data.forEach((bar: any, i: number) => {
+        const model = models[i];
+        if (!model) return;
+        const logoUrl = getModelLogo(model);
+        if (!logoUrl) return;
+
+        const img = getOrLoadImage(logoUrl);
+        if (!img) {
+          // Image still loading – trigger a re-render once loaded
+          const pending = new Image();
+          pending.src = logoUrl;
+          pending.onload = () => {
+            logoImageCache[logoUrl] = pending;
+            chart.draw();
+          };
+          return;
+        }
+
+        // Calculate bar bounds
+        let barTop: number;
+        let barBottom: number;
+        const barX = bar.x;
+
+        if (stacked) {
+          // For stacked, find the top of the topmost dataset and bottom of the lowest
+          barBottom = bar.y; // dataset 0 top
+          barTop = bar.y;
+          for (let d = 0; d < datasets.length; d++) {
+            const dMeta = chart.getDatasetMeta(d);
+            if (dMeta?.data?.[i]) {
+              const el = dMeta.data[i];
+              barTop = Math.min(barTop, el.y);
+            }
+          }
+          barBottom = bar.base ?? chart.scales.y.getPixelForValue(0);
+        } else {
+          barTop = bar.y;
+          barBottom = bar.base ?? chart.scales.y.getPixelForValue(0);
+        }
+
+        const barHeight = barBottom - barTop;
+        if (barHeight < logoSize + 4) return; // bar too small
+
+        // Draw logo centered horizontally, near top of bar
+        const drawX = barX - logoSize / 2;
+        const drawY = barTop + 10;
+
+        ctx.save();
+        // Draw circular white background
+        ctx.beginPath();
+        ctx.arc(barX, drawY + logoSize / 2, logoSize / 2 + 2, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255,255,255,0.9)";
+        ctx.fill();
+        // Draw the image clipped to circle
+        ctx.beginPath();
+        ctx.arc(barX, drawY + logoSize / 2, logoSize / 2, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(img, drawX, drawY, logoSize, logoSize);
+        ctx.restore();
+      });
+    },
+  };
+}
+
 const SEVERITY_COLORS: Record<string, string> = {
   critical: "#ef4444",
   high: "#f97316",
@@ -262,6 +361,12 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
     ],
   };
 
+  // Logo plugins for each chart
+  const severityLogosPlugin = makeBarLogosPlugin(aiReports.map((r) => r.metadata.model), true);
+  const fidelityLogosPlugin = makeBarLogosPlugin(fidelityScores.map((s) => s.report.metadata.model));
+  const highFidelityLogosPlugin = makeBarLogosPlugin(highFidelityScores.map((s) => s.report.metadata.model));
+  const durationLogosPlugin = makeBarLogosPlugin(aiReports.map((r) => r.metadata.model));
+
   return (
     <div>
       {/* Score cards */}
@@ -277,8 +382,9 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             label: "Best Fidelity vs Human",
             value: bestFidelity ? shortLabel(bestFidelity.report) : "-",
             sub: bestFidelity ? `${bestFidelity.matches}/${humanFindings.length} matched` : "",
-            color: "#22c55e",
+            color: "#ffffff",
             smallValue: true,
+            logo: bestFidelity ? getModelLogo(bestFidelity.report.metadata.model) : null,
           },
         ].map((card, i) => (
           <div
@@ -300,8 +406,18 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                 fontSize: card.smallValue ? 14 : 24,
                 fontWeight: 700,
                 color: card.color,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
               }}
             >
+              {card.logo && (
+                <img
+                  src={card.logo}
+                  alt=""
+                  style={{ width: 20, height: 20, flexShrink: 0, background: "white", borderRadius: "50%", padding: 2 }}
+                />
+              )}
               {card.value}
             </div>
             {card.sub && (
@@ -321,7 +437,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             Findings by Severity
           </h3>
           <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
-            <Bar data={severityData} options={stackedOptions as any} plugins={[staggerLabelsPlugin]} />
+            <Bar data={severityData} options={stackedOptions as any} plugins={[staggerLabelsPlugin, severityLogosPlugin]} />
           </div>
         </div>
 
@@ -331,7 +447,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             Fidelity vs Human Audit ({humanFindings.length} findings)
           </h3>
           <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
-            <Bar data={fidelityData} options={chartOptions as any} plugins={[staggerLabelsPlugin]} />
+            <Bar data={fidelityData} options={chartOptions as any} plugins={[staggerLabelsPlugin, fidelityLogosPlugin]} />
           </div>
         </div>
 
@@ -341,7 +457,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             Fidelity vs Human Highs ({humanHighFindings.length} high findings)
           </h3>
           <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
-            <Bar data={highFidelityData} options={chartOptions as any} plugins={[staggerLabelsPlugin]} />
+            <Bar data={highFidelityData} options={chartOptions as any} plugins={[staggerLabelsPlugin, highFidelityLogosPlugin]} />
           </div>
         </div>
 
@@ -351,7 +467,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             Audit Duration (seconds)
           </h3>
           <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
-            <Bar data={durationData} options={chartOptions as any} plugins={[staggerLabelsPlugin]} />
+            <Bar data={durationData} options={chartOptions as any} plugins={[staggerLabelsPlugin, durationLogosPlugin]} />
           </div>
         </div>
       </div>
