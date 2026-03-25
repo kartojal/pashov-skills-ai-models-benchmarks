@@ -312,119 +312,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
     ? Math.round((aggregatedMatches / humanFindings.length) * 100)
     : 0;
 
-  // Circular chart: aggregated AI vs human match rate
-  const circularMatchData = {
-    labels: ["Matched", "Unmatched"],
-    datasets: [
-      {
-        data: [aggregatedMatches, humanFindings.length - aggregatedMatches],
-        backgroundColor: ["#22c55e", "#2a2a4a"],
-        borderColor: ["#22c55e", "#2a2a4a"],
-        borderWidth: 0,
-        cutout: "75%",
-        borderRadius: 6,
-      },
-    ],
-  };
-
-  const circularMatchOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        callbacks: {
-          label: (ctx: any) => {
-            const label = ctx.label;
-            const value = ctx.parsed;
-            return `${label}: ${value} findings`;
-          },
-        },
-      },
-    },
-  };
-
-  // Center text plugin for doughnut
-  const doughnutCenterTextPlugin = {
-    id: "doughnutCenterText",
-    afterDraw(chart: any) {
-      const { ctx, width, height } = chart;
-      ctx.save();
-      // Percentage text
-      const pctFontSize = Math.min(width, height) * 0.18;
-      ctx.font = `700 ${pctFontSize}px sans-serif`;
-      ctx.fillStyle = "#22c55e";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(`${aggregatedCoverage}%`, width / 2, height / 2 - pctFontSize * 0.35);
-      // Sub text
-      const subFontSize = Math.min(width, height) * 0.07;
-      ctx.font = `400 ${subFontSize}px sans-serif`;
-      ctx.fillStyle = "#666680";
-      ctx.fillText(`${aggregatedMatches}/${humanFindings.length} matched`, width / 2, height / 2 + pctFontSize * 0.45);
-      ctx.restore();
-    },
-  };
-
-  // Two-bar chart: human findings vs aggregated AI matched findings
-  const humanVsAiBarData = {
-    labels: [["Human Audit", "Findings"], ["AI Models", "Matched"]],
-    datasets: [
-      {
-        label: "Findings",
-        data: [humanFindings.length, aggregatedMatches],
-        backgroundColor: ["#a5b4fc", "#22c55e"],
-        borderRadius: 6,
-        barPercentage: 0.5,
-      },
-    ],
-  };
-
-  const humanVsAiBarOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        callbacks: {
-          label: (ctx: any) => `${ctx.parsed.y} findings`,
-        },
-      },
-    },
-    scales: {
-      x: {
-        ticks: { color: "#ccc", font: { size: isMobile ? 10 : 12 } },
-        grid: { color: "#1a1a2e" },
-      },
-      y: {
-        ticks: { color: "#888", stepSize: 5 },
-        grid: { color: "#1a1a2e" },
-        beginAtZero: true,
-      },
-    },
-  };
-
-  // Plugin to draw value labels on top of bars
-  const barValuePlugin = {
-    id: "barValueLabels",
-    afterDatasetsDraw(chart: any) {
-      const ctx = chart.ctx;
-      const meta = chart.getDatasetMeta(0);
-      if (!meta?.data) return;
-      ctx.save();
-      ctx.textAlign = "center";
-      ctx.textBaseline = "bottom";
-      ctx.font = "bold 16px sans-serif";
-      meta.data.forEach((bar: any, i: number) => {
-        const value = chart.data.datasets[0].data[i];
-        ctx.fillStyle = chart.data.datasets[0].backgroundColor[i];
-        ctx.fillText(value, bar.x, bar.y - 6);
-      });
-      ctx.restore();
-    },
-  };
-
-  // Fidelity: match count against human findings per model
+  // Fidelity: match count against human findings per model (computed early for new charts)
   const fidelityScores = aiReports
     .map((r) => ({
       report: r,
@@ -442,6 +330,182 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
     }))
     .sort((a, b) => b.matches - a.matches);
   const bestHighFidelity = highFidelityScores[0];
+
+  // Per-model colors for doughnut & bar charts
+  const MODEL_COLORS = [
+    "#22c55e", "#6366f1", "#f97316", "#3b82f6", "#eab308",
+    "#ec4899", "#14b8a6", "#a855f7", "#f43f5e", "#84cc16",
+    "#06b6d4", "#d946ef",
+  ];
+
+  // Circular chart: per-model segments showing each model's matched findings
+  const circularMatchData = {
+    labels: [
+      ...fidelityScores.map((s) => shortLabel(s.report)),
+      "Unmatched",
+    ],
+    datasets: [
+      {
+        data: [
+          ...fidelityScores.map((s) => s.matches),
+          humanFindings.length - aggregatedMatches,
+        ],
+        backgroundColor: [
+          ...fidelityScores.map((_, i) => MODEL_COLORS[i % MODEL_COLORS.length]),
+          "#2a2a4a",
+        ],
+        borderColor: "#0a0a1a",
+        borderWidth: 2,
+        cutout: "70%",
+        borderRadius: 4,
+      },
+    ],
+  };
+
+  const circularMatchOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: (ctx: any) => {
+            const label = ctx.label;
+            const value = ctx.parsed;
+            return `${label}: ${value} matched findings`;
+          },
+        },
+      },
+    },
+  };
+
+  // Plugin: draw model logos on doughnut segments + center text
+  const doughnutLogosPlugin = {
+    id: "doughnutLogos",
+    afterDraw(chart: any) {
+      const { ctx, width, height } = chart;
+      const meta = chart.getDatasetMeta(0);
+      if (!meta?.data) return;
+
+      // Draw center text
+      ctx.save();
+      const pctFontSize = Math.min(width, height) * 0.16;
+      ctx.font = `700 ${pctFontSize}px sans-serif`;
+      ctx.fillStyle = "#22c55e";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(`${aggregatedCoverage}%`, width / 2, height / 2 - pctFontSize * 0.3);
+      const subFontSize = Math.min(width, height) * 0.065;
+      ctx.font = `400 ${subFontSize}px sans-serif`;
+      ctx.fillStyle = "#666680";
+      ctx.fillText(`${aggregatedMatches}/${humanFindings.length} matched`, width / 2, height / 2 + pctFontSize * 0.5);
+      ctx.restore();
+
+      // Draw logos on each arc (skip "Unmatched" = last segment)
+      const logoSize = 16;
+      meta.data.forEach((arc: any, i: number) => {
+        if (i >= fidelityScores.length) return; // skip unmatched
+        const model = fidelityScores[i]!.report.metadata.model;
+        const logoUrl = getModelLogo(model);
+        if (!logoUrl) return;
+
+        const img = getOrLoadImage(logoUrl);
+        if (!img) {
+          const pending = new Image();
+          pending.src = logoUrl;
+          pending.onload = () => {
+            logoImageCache[logoUrl] = pending;
+            chart.draw();
+          };
+          return;
+        }
+
+        // Calculate midpoint angle of the arc
+        const startAngle = arc.startAngle;
+        const endAngle = arc.endAngle;
+        const midAngle = (startAngle + endAngle) / 2;
+        const outerRadius = arc.outerRadius;
+        const innerRadius = arc.innerRadius;
+        const midRadius = (outerRadius + innerRadius) / 2;
+
+        const cx = arc.x + Math.cos(midAngle) * midRadius;
+        const cy = arc.y + Math.sin(midAngle) * midRadius;
+
+        // Only draw if arc is large enough
+        const arcSpan = endAngle - startAngle;
+        if (arcSpan < 0.3) return;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, logoSize / 2 + 2, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255,255,255,0.9)";
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(cx, cy, logoSize / 2, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(img, cx - logoSize / 2, cy - logoSize / 2, logoSize, logoSize);
+        ctx.restore();
+      });
+    },
+  };
+
+  // Per-model bar chart: each model's matched findings with logos
+  const perModelBarData = {
+    labels: fidelityScores.map((s) => chartLabel(s.report)),
+    datasets: [
+      {
+        label: "Matched Findings",
+        data: fidelityScores.map((s) => s.matches),
+        backgroundColor: fidelityScores.map((_, i) => MODEL_COLORS[i % MODEL_COLORS.length]),
+        borderRadius: 6,
+      },
+    ],
+  };
+
+  const perModelBarOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: (ctx: any) => `${ctx.parsed.y}/${humanFindings.length} matched`,
+        },
+      },
+    },
+    scales: {
+      x: {
+        ticks: {
+          color: "#ccc",
+          font: { size: isMobile ? 8 : 11 },
+          maxRotation: 0,
+          minRotation: 0,
+          autoSkip: false,
+          padding: isMobile ? -1 : 4,
+          callback: function (_value: unknown, index: number, _ticks: unknown[]) {
+            if (isMobile && index % 2 === 1) return "";
+            const labelSet = (this as any).chart.data.labels;
+            return labelSet?.[index];
+          },
+        },
+        afterFit(axis: any) {
+          axis.paddingBottom = (axis.paddingBottom || 0) + (isMobile ? 34 : 14);
+        },
+        grid: { color: "#1a1a2e" },
+      },
+      y: {
+        ticks: { color: "#888", stepSize: 1 },
+        grid: { color: "#1a1a2e" },
+        beginAtZero: true,
+        max: humanFindings.length,
+      },
+    },
+    layout: {
+      padding: { bottom: isMobile ? 34 : 16 },
+    },
+  };
+
+  const perModelBarLogosPlugin = makeBarLogosPlugin(fidelityScores.map((s) => s.report.metadata.model));
 
   // Fidelity chart data (sorted by matches descending)
   const fidelityData = {
@@ -550,7 +614,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
           marginBottom: 24,
         }}
       >
-        {/* Circular aggregated match chart */}
+        {/* Circular per-model match chart */}
         <div
           style={{
             background: "#12121f",
@@ -560,21 +624,57 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
           }}
         >
           <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12, marginTop: 0 }}>
-            Aggregated AI vs Human Match Rate
+            AI vs Human Match Rate by Model
           </h3>
-          <div style={{ height: isMobile ? 220 : 280, position: "relative" }}>
+          <div style={{ height: isMobile ? 240 : 300, position: "relative" }}>
             <Doughnut
               data={circularMatchData}
               options={circularMatchOptions as any}
-              plugins={[doughnutCenterTextPlugin]}
+              plugins={[doughnutLogosPlugin]}
             />
           </div>
-          <div style={{ textAlign: "center", marginTop: 12, fontSize: 12, color: "#666680" }}>
-            Percentage of human audit findings matched by at least one AI model
+          {/* Legend */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12, justifyContent: "center" }}>
+            {fidelityScores.map((s, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "#aaa" }}>
+                {getModelLogo(s.report.metadata.model) && (
+                  <img
+                    src={getModelLogo(s.report.metadata.model)!}
+                    alt=""
+                    style={{ width: 14, height: 14, background: "white", borderRadius: "50%", padding: 1 }}
+                  />
+                )}
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    backgroundColor: MODEL_COLORS[i % MODEL_COLORS.length],
+                    display: "inline-block",
+                    flexShrink: 0,
+                  }}
+                />
+                <span>{shortModel(s.report.metadata.model)}</span>
+                <span style={{ color: "#666680" }}>({s.matches})</span>
+              </div>
+            ))}
+            <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "#666680" }}>
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  backgroundColor: "#2a2a4a",
+                  display: "inline-block",
+                  flexShrink: 0,
+                }}
+              />
+              <span>Unmatched ({humanFindings.length - aggregatedMatches})</span>
+            </div>
           </div>
         </div>
 
-        {/* Human vs AI matched findings bar chart */}
+        {/* Per-model matched findings bar chart */}
         <div
           style={{
             background: "#12121f",
@@ -584,17 +684,14 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
           }}
         >
           <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12, marginTop: 0 }}>
-            Human Findings vs AI Matched Findings
+            Matched Findings by Model ({humanFindings.length} human findings)
           </h3>
-          <div style={{ height: isMobile ? 220 : 280, position: "relative" }}>
+          <div style={{ height: isMobile ? 240 : 300, position: "relative" }}>
             <Bar
-              data={humanVsAiBarData}
-              options={humanVsAiBarOptions as any}
-              plugins={[barValuePlugin]}
+              data={perModelBarData}
+              options={perModelBarOptions as any}
+              plugins={[staggerLabelsPlugin, perModelBarLogosPlugin]}
             />
-          </div>
-          <div style={{ textAlign: "center", marginTop: 12, fontSize: 12, color: "#666680" }}>
-            Total human audit findings vs aggregated AI findings that matched
           </div>
         </div>
       </div>
