@@ -279,6 +279,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             sub: bestFidelity ? `${bestFidelity.matches}/${humanFindings.length} matched` : "",
             color: "#ffffff",
             smallValue: true,
+            logo: bestFidelity ? getModelLogo(bestFidelity.report.metadata.model) : null,
           },
         ].map((card, i) => (
           <div
@@ -300,8 +301,18 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
                 fontSize: card.smallValue ? 14 : 24,
                 fontWeight: 700,
                 color: card.color,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
               }}
             >
+              {card.logo && (
+                <img
+                  src={card.logo}
+                  alt=""
+                  style={{ width: 20, height: 20, flexShrink: 0, background: "white", borderRadius: "50%", padding: 2 }}
+                />
+              )}
               {card.value}
             </div>
             {card.sub && (
