@@ -102,9 +102,9 @@ function makeBarLogosPlugin(models: string[], stacked = false) {
         const barHeight = barBottom - barTop;
         if (barHeight < logoSize + 4) return; // bar too small
 
-        // Draw logo centered horizontally, near bottom of bar
+        // Draw logo centered horizontally, near top of bar
         const drawX = barX - logoSize / 2;
-        const drawY = barBottom - logoSize - 4;
+        const drawY = barTop + 4;
 
         ctx.save();
         // Draw circular white background
