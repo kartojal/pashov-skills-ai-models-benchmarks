@@ -96,10 +96,10 @@ export function App() {
                 letterSpacing: "-0.02em",
               }}
             >
-              Security Audit Skills Benchmark
+              AI Audit Web3 Benchmark
             </h1>
             <p style={{ fontSize: 13, color: "#8888aa", marginTop: 4 }}>
-              Pashov Skills &times; AI Models Comparison
+              Pashov Skills Comparison
             </p>
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
