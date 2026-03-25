@@ -81,52 +81,28 @@ export function App() {
           className="app-header-inner"
           style={{
             display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
+            flexDirection: "column",
             maxWidth: 1400,
             margin: "0 auto",
           }}
         >
-          <div>
-            <h1
-              style={{
-                fontSize: 24,
-                fontWeight: 700,
-                color: "#fff",
-                letterSpacing: "-0.02em",
-              }}
-            >
-              Security Audit Skills Benchmark
-            </h1>
-            <p style={{ fontSize: 13, color: "#8888aa", marginTop: 4 }}>
-              Pashov Skills &times; AI Models Comparison
-            </p>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <div className="target-buttons" style={{ display: "flex", gap: 8 }}>
-              {targets.map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setActiveTarget(t)}
-                  style={{
-                    padding: "8px 16px",
-                    borderRadius: 8,
-                    border:
-                      t === activeTarget
-                        ? "1px solid #6366f1"
-                        : "1px solid #2a2a4a",
-                    background: t === activeTarget ? "#6366f120" : "transparent",
-                    color: t === activeTarget ? "#a5b4fc" : "#8888aa",
-                    cursor: "pointer",
-                    fontSize: 13,
-                    fontWeight: 500,
-                  }}
-                >
-                  {t}
-                </button>
-              ))}
+          <div className="header-top-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
+            <div>
+              <h1
+                style={{
+                  fontSize: 24,
+                  fontWeight: 700,
+                  color: "#fff",
+                  letterSpacing: "-0.02em",
+                }}
+              >
+                AI Audit Web3 Benchmark
+              </h1>
+              <p style={{ fontSize: 13, color: "#8888aa", marginTop: 4 }}>
+                Pashov Skills Comparison
+              </p>
             </div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div className="header-actions" style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <a
                 href="https://github.com/kartojal/pashov-skills-ai-models-benchmarks"
                 target="_blank"
@@ -135,14 +111,14 @@ export function App() {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 6,
-                  padding: "6px 12px",
+                  gap: 5,
+                  padding: "5px 10px",
                   borderRadius: 8,
                   border: "1px solid #2a2a4a",
                   background: "transparent",
                   color: "#8888aa",
                   textDecoration: "none",
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: 500,
                   transition: "border-color 0.2s, color 0.2s",
                 }}
@@ -155,7 +131,7 @@ export function App() {
                   e.currentTarget.style.color = "#8888aa";
                 }}
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
                   <path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25z" />
                 </svg>
                 Star
@@ -170,8 +146,8 @@ export function App() {
                   src="https://avatars.githubusercontent.com/u/32573397?v=4"
                   alt="Pashov"
                   style={{
-                    width: 36,
-                    height: 36,
+                    width: 30,
+                    height: 30,
                     borderRadius: "50%",
                     border: "2px solid #2a2a4a",
                     objectFit: "cover",
@@ -191,8 +167,8 @@ export function App() {
                   src="https://avatars.githubusercontent.com/u/11179847?v=4"
                   alt="Kartojal"
                   style={{
-                    width: 36,
-                    height: 36,
+                    width: 30,
+                    height: 30,
                     borderRadius: "50%",
                     border: "2px solid #2a2a4a",
                     objectFit: "cover",
@@ -203,6 +179,29 @@ export function App() {
                 />
               </a>
             </div>
+          </div>
+          <div className="target-buttons" style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            {targets.map((t) => (
+              <button
+                key={t}
+                onClick={() => setActiveTarget(t)}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: 8,
+                  border:
+                    t === activeTarget
+                      ? "1px solid #6366f1"
+                      : "1px solid #2a2a4a",
+                  background: t === activeTarget ? "#6366f120" : "transparent",
+                  color: t === activeTarget ? "#a5b4fc" : "#8888aa",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: 500,
+                }}
+              >
+                {t}
+              </button>
+            ))}
           </div>
         </div>
       </header>

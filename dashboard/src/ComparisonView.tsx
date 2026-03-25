@@ -12,7 +12,7 @@ import { Bar } from "react-chartjs-2";
 import type { Report } from "./types";
 import { useIsMobile } from "./useIsMobile";
 import { getModelLogo } from "./modelLogos";
-import { matchScore, countMatches } from "./findingMatcher";
+import { matchScore, countMatches, countUniqueFindings } from "./findingMatcher";
 
 ChartJS.register(
   CategoryScale,
@@ -131,8 +131,9 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
           maxRotation: 0,
           minRotation: 0,
           autoSkip: false,
-          padding: 4,
+          padding: isMobile ? -1 : 4,
           callback: function (_value: unknown, index: number, _ticks: unknown[]) {
+            if (isMobile && index % 2 === 1) return ""; // hide odd labels; drawn by plugin
             const labelSet = (this as any).chart.data.labels;
             const label = labelSet?.[index];
             return label;
@@ -140,7 +141,7 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         },
         afterFit(axis: any) {
           // Add extra height to accommodate staggered labels
-          axis.paddingBottom = (axis.paddingBottom || 0) + 14;
+          axis.paddingBottom = (axis.paddingBottom || 0) + (isMobile ? 34 : 14);
         },
         grid: { color: "#1a1a2e" },
       },
@@ -150,14 +151,15 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
       },
     },
     layout: {
-      padding: { bottom: 16 },
+      padding: { bottom: isMobile ? 34 : 16 },
     },
   };
 
-  // Plugin to stagger even-indexed x-axis tick labels downward
+  // Plugin to draw odd-indexed x-axis labels staggered below even ones (mobile only)
   const staggerLabelsPlugin = {
     id: "staggerLabels",
     afterDraw(chart: any) {
+      if (!isMobile) return;
       const xAxis = chart.scales?.x;
       if (!xAxis) return;
       const ticks = xAxis.ticks;
@@ -166,29 +168,25 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
       const ctx = chart.ctx;
       ctx.save();
 
+      const fontSize = 8;
+      const lineHeight = fontSize + 3;
+
       ticks.forEach((_tick: any, i: number) => {
-        if (i % 2 !== 1) return; // only shift odd-indexed (0-based) labels
+        if (i % 2 !== 1) return;
         const x = xAxis.getPixelForTick(i);
         const label = chart.data.labels?.[i];
         if (!label) return;
 
         const lines = Array.isArray(label) ? label : [label];
-        const fontSize = isMobile ? 8 : 11;
-        const lineHeight = fontSize + 3;
-        const yBase = xAxis.bottom + 4;
+        // Position below the even-indexed labels
+        const yBase = xAxis.bottom + lineHeight + 1;
 
-        // Clear original label area for this tick
-        const labelWidth = 90;
-        ctx.fillStyle = "#0a0a14";
-        ctx.fillRect(x - labelWidth / 2, yBase - 2, labelWidth, lineHeight * lines.length + 16);
-
-        // Draw label shifted down
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
         ctx.font = `${fontSize}px sans-serif`;
         ctx.fillStyle = "#ccc";
         lines.forEach((line: string, li: number) => {
-          ctx.fillText(line, x, yBase + 26 + li * lineHeight);
+          ctx.fillText(line, x, yBase + li * lineHeight);
         });
       });
 
@@ -206,14 +204,15 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
   };
 
   // Score card stats (AI reports only)
-  const totalFindings = aiReports.reduce(
-    (sum, r) => sum + r.summary.total_findings,
-    0
-  );
-  const avgDuration = Math.round(
-    aiReports.reduce((sum, r) => sum + r.metadata.duration_seconds, 0) /
-      aiReports.length
-  );
+  const allAiFindings = aiReports.flatMap((r) => r.findings);
+  const totalFindings = countUniqueFindings(allAiFindings);
+
+  // Aggregated AI coverage: how many unique human findings are matched by ANY AI report
+  const aggregatedMatches = countMatches(allAiFindings, humanFindings);
+  const aggregatedCoverage = humanFindings.length > 0
+    ? Math.round((aggregatedMatches / humanFindings.length) * 100)
+    : 0;
+
   // Fidelity: match count against human findings per model
   const fidelityScores = aiReports
     .map((r) => ({
@@ -269,19 +268,10 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
       <div className="score-cards-grid">
         {[
           {
-            label: "Models Tested",
-            value: aiReports.length,
-            color: "#6366f1",
-          },
-          {
             label: "Total Findings",
-            value: totalFindings,
+            value: `${totalFindings} unique`,
+            sub: `${aggregatedCoverage}% aggregated AI vs human coverage`,
             color: "#f97316",
-          },
-          {
-            label: "Avg Duration",
-            value: `${avgDuration}s`,
-            color: "#3b82f6",
           },
           {
             label: "Best Fidelity vs Human",
@@ -335,16 +325,6 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
           </div>
         </div>
 
-        {/* Duration */}
-        <div>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>
-            Audit Duration (seconds)
-          </h3>
-          <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
-            <Bar data={durationData} options={chartOptions as any} plugins={[staggerLabelsPlugin]} />
-          </div>
-        </div>
-
         {/* Fidelity vs Human */}
         <div>
           <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>
@@ -362,6 +342,16 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
           </h3>
           <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
             <Bar data={highFidelityData} options={chartOptions as any} plugins={[staggerLabelsPlugin]} />
+          </div>
+        </div>
+
+        {/* Duration */}
+        <div>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>
+            Audit Duration (seconds)
+          </h3>
+          <div className="bar-chart-container" style={{ height: 420, position: "relative", width: "100%", overflow: "hidden" }}>
+            <Bar data={durationData} options={chartOptions as any} plugins={[staggerLabelsPlugin]} />
           </div>
         </div>
       </div>
@@ -444,7 +434,9 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
             </tr>
           </thead>
           <tbody>
-            {aiReports.map((r, i) => {
+            {[...aiReports]
+              .sort((a, b) => countMatches(b.findings, humanFindings) - countMatches(a.findings, humanFindings))
+              .map((r, i) => {
               const diffLabel = `${countMatches(r.findings, humanFindings)}/${humanFindings.length}`;
               const highDiffLabel = `${countMatches(r.findings, humanHighFindings)}/${humanHighFindings.length}`;
               return (

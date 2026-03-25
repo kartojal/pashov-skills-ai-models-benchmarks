@@ -124,3 +124,25 @@ export function getMatchedFindingIds(aiFindings: Finding[], humanFindings: Findi
   }
   return matchedIds;
 }
+
+/** Counts unique findings across all AI findings by clustering duplicates */
+export function countUniqueFindings(allFindings: Finding[]): number {
+  const THRESHOLD = 0.5;
+  const assigned = new Set<number>();
+  let groups = 0;
+
+  for (let i = 0; i < allFindings.length; i++) {
+    if (assigned.has(i)) continue;
+    assigned.add(i);
+    groups++;
+
+    for (let j = i + 1; j < allFindings.length; j++) {
+      if (assigned.has(j)) continue;
+      const score = matchScore(allFindings[j]!, allFindings[i]!);
+      if (score >= THRESHOLD) {
+        assigned.add(j);
+      }
+    }
+  }
+  return groups;
+}
