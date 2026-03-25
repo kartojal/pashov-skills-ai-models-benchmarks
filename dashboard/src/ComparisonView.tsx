@@ -331,27 +331,59 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
     .sort((a, b) => b.matches - a.matches);
   const bestHighFidelity = highFidelityScores[0];
 
-  // Per-model colors for doughnut & bar charts
+  // Per-model colors for doughnut chart
   const MODEL_COLORS = [
     "#22c55e", "#6366f1", "#f97316", "#3b82f6", "#eab308",
     "#ec4899", "#14b8a6", "#a855f7", "#f43f5e", "#84cc16",
     "#06b6d4", "#d946ef",
   ];
 
-  // Circular chart: per-model segments showing each model's matched findings
+  // Deduplicated per-model attribution: assign each matched human finding
+  // to the model with the highest match score (no double-counting)
+  const MATCH_THRESHOLD = 0.5;
+  const modelAttribution = new Map<number, number>(); // fidelityScores index → count
+  fidelityScores.forEach((_, i) => modelAttribution.set(i, 0));
+
+  const usedHumanFindings = new Set<number>();
+  // For each human finding, find the best (model, ai-finding) pair
+  for (let hIdx = 0; hIdx < humanFindings.length; hIdx++) {
+    const hf = humanFindings[hIdx]!;
+    let bestModelIdx = -1;
+    let bestScore = 0;
+    for (let mIdx = 0; mIdx < fidelityScores.length; mIdx++) {
+      const report = fidelityScores[mIdx]!.report;
+      for (const af of report.findings) {
+        const score = matchScore(af, hf);
+        if (score > bestScore) {
+          bestScore = score;
+          bestModelIdx = mIdx;
+        }
+      }
+    }
+    if (bestModelIdx >= 0 && bestScore >= MATCH_THRESHOLD) {
+      modelAttribution.set(bestModelIdx, modelAttribution.get(bestModelIdx)! + 1);
+      usedHumanFindings.add(hIdx);
+    }
+  }
+
+  // Build doughnut data from deduplicated attribution
+  const attributedModels = fidelityScores
+    .map((s, i) => ({ score: s, idx: i, count: modelAttribution.get(i)! }))
+    .filter((m) => m.count > 0);
+
   const circularMatchData = {
     labels: [
-      ...fidelityScores.map((s) => shortLabel(s.report)),
+      ...attributedModels.map((m) => shortLabel(m.score.report)),
       "Unmatched",
     ],
     datasets: [
       {
         data: [
-          ...fidelityScores.map((s) => s.matches),
-          humanFindings.length - aggregatedMatches,
+          ...attributedModels.map((m) => m.count),
+          humanFindings.length - usedHumanFindings.size,
         ],
         backgroundColor: [
-          ...fidelityScores.map((_, i) => MODEL_COLORS[i % MODEL_COLORS.length]),
+          ...attributedModels.map((m) => MODEL_COLORS[m.idx % MODEL_COLORS.length]),
           "#2a2a4a",
         ],
         borderColor: "#0a0a1a",
@@ -404,8 +436,8 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
       // Draw logos on each arc (skip "Unmatched" = last segment)
       const logoSize = 16;
       meta.data.forEach((arc: any, i: number) => {
-        if (i >= fidelityScores.length) return; // skip unmatched
-        const model = fidelityScores[i]!.report.metadata.model;
+        if (i >= attributedModels.length) return; // skip unmatched
+        const model = attributedModels[i]!.score.report.metadata.model;
         const logoUrl = getModelLogo(model);
         if (!logoUrl) return;
 
@@ -448,64 +480,6 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
       });
     },
   };
-
-  // Per-model bar chart: each model's matched findings with logos
-  const perModelBarData = {
-    labels: fidelityScores.map((s) => chartLabel(s.report)),
-    datasets: [
-      {
-        label: "Matched Findings",
-        data: fidelityScores.map((s) => s.matches),
-        backgroundColor: fidelityScores.map((_, i) => MODEL_COLORS[i % MODEL_COLORS.length]),
-        borderRadius: 6,
-      },
-    ],
-  };
-
-  const perModelBarOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        callbacks: {
-          label: (ctx: any) => `${ctx.parsed.y}/${humanFindings.length} matched`,
-        },
-      },
-    },
-    scales: {
-      x: {
-        ticks: {
-          color: "#ccc",
-          font: { size: isMobile ? 8 : 11 },
-          maxRotation: 0,
-          minRotation: 0,
-          autoSkip: false,
-          padding: isMobile ? -1 : 4,
-          callback: function (_value: unknown, index: number, _ticks: unknown[]) {
-            if (isMobile && index % 2 === 1) return "";
-            const labelSet = (this as any).chart.data.labels;
-            return labelSet?.[index];
-          },
-        },
-        afterFit(axis: any) {
-          axis.paddingBottom = (axis.paddingBottom || 0) + (isMobile ? 34 : 14);
-        },
-        grid: { color: "#1a1a2e" },
-      },
-      y: {
-        ticks: { color: "#888", stepSize: 1 },
-        grid: { color: "#1a1a2e" },
-        beginAtZero: true,
-        max: humanFindings.length,
-      },
-    },
-    layout: {
-      padding: { bottom: isMobile ? 34 : 16 },
-    },
-  };
-
-  const perModelBarLogosPlugin = makeBarLogosPlugin(fidelityScores.map((s) => s.report.metadata.model));
 
   // Fidelity chart data (sorted by matches descending)
   const fidelityData = {
@@ -605,93 +579,66 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         ))}
       </div>
 
-      {/* Aggregated Match Charts */}
+      {/* Circular per-model match chart */}
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
-          gap: 20,
           marginBottom: 24,
+          background: "#12121f",
+          border: "1px solid #2a2a4a",
+          borderRadius: 12,
+          padding: "20px 24px",
+          maxWidth: isMobile ? "100%" : 520,
+          marginLeft: "auto",
+          marginRight: "auto",
         }}
       >
-        {/* Circular per-model match chart */}
-        <div
-          style={{
-            background: "#12121f",
-            border: "1px solid #2a2a4a",
-            borderRadius: 12,
-            padding: "20px 24px",
-          }}
-        >
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12, marginTop: 0 }}>
-            AI vs Human Match Rate by Model
-          </h3>
-          <div style={{ height: isMobile ? 240 : 300, position: "relative" }}>
-            <Doughnut
-              data={circularMatchData}
-              options={circularMatchOptions as any}
-              plugins={[doughnutLogosPlugin]}
-            />
-          </div>
-          {/* Legend */}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12, justifyContent: "center" }}>
-            {fidelityScores.map((s, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "#aaa" }}>
-                {getModelLogo(s.report.metadata.model) && (
-                  <img
-                    src={getModelLogo(s.report.metadata.model)!}
-                    alt=""
-                    style={{ width: 14, height: 14, background: "white", borderRadius: "50%", padding: 1 }}
-                  />
-                )}
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: "50%",
-                    backgroundColor: MODEL_COLORS[i % MODEL_COLORS.length],
-                    display: "inline-block",
-                    flexShrink: 0,
-                  }}
+        <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12, marginTop: 0 }}>
+          AI vs Human Match Rate by Model
+        </h3>
+        <div style={{ height: isMobile ? 240 : 300, position: "relative" }}>
+          <Doughnut
+            data={circularMatchData}
+            options={circularMatchOptions as any}
+            plugins={[doughnutLogosPlugin]}
+          />
+        </div>
+        {/* Legend */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12, justifyContent: "center" }}>
+          {attributedModels.map((m) => (
+            <div key={m.idx} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "#aaa" }}>
+              {getModelLogo(m.score.report.metadata.model) && (
+                <img
+                  src={getModelLogo(m.score.report.metadata.model)!}
+                  alt=""
+                  style={{ width: 14, height: 14, background: "white", borderRadius: "50%", padding: 1 }}
                 />
-                <span>{shortModel(s.report.metadata.model)}</span>
-                <span style={{ color: "#666680" }}>({s.matches})</span>
-              </div>
-            ))}
-            <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "#666680" }}>
+              )}
               <span
                 style={{
                   width: 8,
                   height: 8,
                   borderRadius: "50%",
-                  backgroundColor: "#2a2a4a",
+                  backgroundColor: MODEL_COLORS[m.idx % MODEL_COLORS.length],
                   display: "inline-block",
                   flexShrink: 0,
                 }}
               />
-              <span>Unmatched ({humanFindings.length - aggregatedMatches})</span>
+              <span>{shortModel(m.score.report.metadata.model)}</span>
+              <span style={{ color: "#666680" }}>({m.count})</span>
             </div>
-          </div>
-        </div>
-
-        {/* Per-model matched findings bar chart */}
-        <div
-          style={{
-            background: "#12121f",
-            border: "1px solid #2a2a4a",
-            borderRadius: 12,
-            padding: "20px 24px",
-          }}
-        >
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: "#a5b4fc", marginBottom: 12, marginTop: 0 }}>
-            Matched Findings by Model ({humanFindings.length} human findings)
-          </h3>
-          <div style={{ height: isMobile ? 240 : 300, position: "relative" }}>
-            <Bar
-              data={perModelBarData}
-              options={perModelBarOptions as any}
-              plugins={[staggerLabelsPlugin, perModelBarLogosPlugin]}
+          ))}
+          <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "#666680" }}>
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                backgroundColor: "#2a2a4a",
+                display: "inline-block",
+                flexShrink: 0,
+              }}
             />
+            <span>Unmatched ({humanFindings.length - usedHumanFindings.size})</span>
           </div>
         </div>
       </div>
