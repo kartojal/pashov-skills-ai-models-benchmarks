@@ -12,7 +12,7 @@ import { Bar } from "react-chartjs-2";
 import type { Report } from "./types";
 import { useIsMobile } from "./useIsMobile";
 import { getModelLogo } from "./modelLogos";
-import { matchScore, countMatches } from "./findingMatcher";
+import { matchScore, countMatches, countUniqueFindings } from "./findingMatcher";
 
 ChartJS.register(
   CategoryScale,
@@ -204,13 +204,10 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
   };
 
   // Score card stats (AI reports only)
-  const totalFindings = aiReports.reduce(
-    (sum, r) => sum + r.summary.total_findings,
-    0
-  );
+  const allAiFindings = aiReports.flatMap((r) => r.findings);
+  const totalFindings = countUniqueFindings(allAiFindings);
 
   // Aggregated AI coverage: how many unique human findings are matched by ANY AI report
-  const allAiFindings = aiReports.flatMap((r) => r.findings);
   const aggregatedMatches = countMatches(allAiFindings, humanFindings);
   const aggregatedCoverage = humanFindings.length > 0
     ? Math.round((aggregatedMatches / humanFindings.length) * 100)
