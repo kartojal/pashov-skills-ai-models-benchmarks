@@ -208,6 +208,14 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
     (sum, r) => sum + r.summary.total_findings,
     0
   );
+
+  // Aggregated AI coverage: how many unique human findings are matched by ANY AI report
+  const allAiFindings = aiReports.flatMap((r) => r.findings);
+  const aggregatedMatches = countMatches(allAiFindings, humanFindings);
+  const aggregatedCoverage = humanFindings.length > 0
+    ? Math.round((aggregatedMatches / humanFindings.length) * 100)
+    : 0;
+
   // Fidelity: match count against human findings per model
   const fidelityScores = aiReports
     .map((r) => ({
@@ -264,7 +272,8 @@ export function ComparisonView({ reports, onSelectModel }: Props) {
         {[
           {
             label: "Total Findings",
-            value: totalFindings,
+            value: `${totalFindings} unique`,
+            sub: `${aggregatedCoverage}% aggregated AI vs human coverage`,
             color: "#f97316",
           },
           {
